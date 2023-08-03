@@ -772,11 +772,32 @@ static void __nvmet_req_complete(struct nvmet_req *req, u16 status)
 void nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
 	struct nvmet_sq *sq = req->sq;
+	unsigned long flags;
+
+	spin_lock_irqsave(&sq->state_lock, flags);
+
+	if (unlikely(req->aborted))
+		status = NVME_SC_ABORT_REQ;
+	else
+		list_del(&req->state_list);
+
+	spin_unlock_irqrestore(&sq->state_lock, flags);
 
 	__nvmet_req_complete(req, status);
 	percpu_ref_put(&sq->ref);
 }
 EXPORT_SYMBOL_GPL(nvmet_req_complete);
+
+void nvmet_req_abort(struct nvmet_req *req)
+{
+	lockdep_assert_held(&req->sq->state_lock);
+
+	if (req->abort)
+		req->abort(req);
+
+	req->aborted = true;
+	list_del_init(&req->state_list);
+}
 
 void nvmet_cq_setup(struct nvmet_ctrl *ctrl, struct nvmet_cq *cq,
 		u16 qid, u16 size)
@@ -860,6 +881,8 @@ int nvmet_sq_init(struct nvmet_sq *sq)
 	}
 	init_completion(&sq->free_done);
 	init_completion(&sq->confirm_done);
+	INIT_LIST_HEAD(&sq->state_list);
+	spin_lock_init(&sq->state_lock);
 	nvmet_auth_sq_init(sq);
 
 	return 0;
@@ -913,6 +936,12 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 	if (nvmet_is_passthru_req(req))
 		return nvmet_parse_passthru_io_cmd(req);
 
+	if (req->cmd->common.opcode == nvme_cmd_cancel) {
+		req->execute = nvmet_execute_cancel;
+		if (req->cmd->cancel.nsid == 0xFFFFFFFF)
+			return 0;
+	}
+
 	ret = nvmet_req_find_ns(req);
 	if (unlikely(ret))
 		return ret;
@@ -946,6 +975,7 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 		struct nvmet_sq *sq, const struct nvmet_fabrics_ops *ops)
 {
 	u8 flags = req->cmd->common.flags;
+	unsigned long sflags;
 	u16 status;
 
 	req->cq = cq;
@@ -962,6 +992,7 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 	req->ns = NULL;
 	req->error_loc = NVMET_NO_ERROR_LOC;
 	req->error_slba = 0;
+	req->aborted = false;
 
 	/* no support for fused commands yet */
 	if (unlikely(flags & (NVME_CMD_FUSE_FIRST | NVME_CMD_FUSE_SECOND))) {
@@ -1002,6 +1033,12 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 	if (sq->ctrl)
 		sq->ctrl->reset_tbkas = true;
 
+	INIT_LIST_HEAD(&req->state_list);
+
+	spin_lock_irqsave(&sq->state_lock, sflags);
+	list_add_tail(&req->state_list, &sq->state_list);
+	spin_unlock_irqrestore(&sq->state_lock, sflags);
+
 	return true;
 
 fail:
@@ -1012,6 +1049,12 @@ EXPORT_SYMBOL_GPL(nvmet_req_init);
 
 void nvmet_req_uninit(struct nvmet_req *req)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&req->sq->state_lock, flags);
+	list_del(&req->state_list);
+	spin_unlock_irqrestore(&req->sq->state_lock, flags);
+
 	percpu_ref_put(&req->sq->ref);
 	if (req->ns)
 		nvmet_put_namespace(req->ns);
