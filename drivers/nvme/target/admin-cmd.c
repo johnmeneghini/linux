@@ -176,6 +176,7 @@ static void nvmet_get_cmd_effects_nvm(struct nvme_effects_log *log)
 	log->iocs[nvme_cmd_read] =
 	log->iocs[nvme_cmd_flush] =
 	log->iocs[nvme_cmd_dsm]	=
+	log->iocs[nvme_cmd_cancel] =
 		cpu_to_le32(NVME_CMD_EFFECTS_CSUPP);
 	log->iocs[nvme_cmd_write] =
 	log->iocs[nvme_cmd_write_zeroes] =
@@ -736,8 +737,44 @@ static void nvmet_execute_identify(struct nvmet_req *req)
  */
 static void nvmet_execute_abort(struct nvmet_req *req)
 {
+	u16 cid;
+	__le16 sqid;
+	unsigned long flags;
+	struct nvmet_sq *sq;
+	struct nvmet_ctrl *ctrl = req->sq->ctrl;
+	struct nvmet_req *r, *next;
+
 	if (!nvmet_check_transfer_len(req, 0))
 		return;
+
+	cid  = req->cmd->abort.cid;
+	sqid = le16_to_cpu(req->cmd->abort.sqid);
+	if (sqid > ctrl->subsys->max_qid) {
+		/* Invalid queue id */
+		goto error;
+	}
+
+	sq = ctrl->sqs[sqid];
+	if (!sq)
+		goto error;
+
+	spin_lock_irqsave(&sq->state_lock, flags);
+	list_for_each_entry_safe(r, next, &sq->state_list, state_list) {
+		if (cid != r->cmd->common.command_id)
+			continue;
+
+		if (r == req) {
+			/* Abort command can't abort itself */
+			continue;
+		}
+
+		printk("Found command to abort (cid = %u)\n", (unsigned int) cid);
+		nvmet_req_abort(r);
+		break;
+	}
+	spin_unlock_irqrestore(&sq->state_lock, flags);
+
+error:
 	nvmet_set_result(req, 1);
 	nvmet_req_complete(req, 0);
 }
