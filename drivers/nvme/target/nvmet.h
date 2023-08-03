@@ -124,6 +124,9 @@ struct nvmet_sq {
 #endif
 	struct completion	free_done;
 	struct completion	confirm_done;
+
+	spinlock_t		state_lock;
+	struct list_head	state_list;
 };
 
 struct nvmet_ana_group {
@@ -400,12 +403,16 @@ struct nvmet_req {
 	struct nvmet_port	*port;
 
 	void (*execute)(struct nvmet_req *req);
+	void (*abort)(struct nvmet_req *req);
 	const struct nvmet_fabrics_ops *ops;
 
 	struct pci_dev		*p2p_dev;
 	struct device		*p2p_client;
 	u16			error_loc;
 	u64			error_slba;
+
+	struct list_head	state_list;
+	bool			aborted;
 };
 
 #define NVMET_MAX_MPOOL_BVEC		16
@@ -468,12 +475,15 @@ u16 nvmet_parse_discovery_cmd(struct nvmet_req *req);
 u16 nvmet_parse_fabrics_admin_cmd(struct nvmet_req *req);
 u16 nvmet_parse_fabrics_io_cmd(struct nvmet_req *req);
 
+void nvmet_execute_cancel(struct nvmet_req *req);
+
 bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 		struct nvmet_sq *sq, const struct nvmet_fabrics_ops *ops);
 void nvmet_req_uninit(struct nvmet_req *req);
 bool nvmet_check_transfer_len(struct nvmet_req *req, size_t len);
 bool nvmet_check_data_len_lte(struct nvmet_req *req, size_t data_len);
 void nvmet_req_complete(struct nvmet_req *req, u16 status);
+void nvmet_req_abort(struct nvmet_req *req);
 int nvmet_req_alloc_sgls(struct nvmet_req *req);
 void nvmet_req_free_sgls(struct nvmet_req *req);
 

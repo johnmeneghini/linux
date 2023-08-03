@@ -330,6 +330,21 @@ static void nvmet_file_execute_dsm(struct nvmet_req *req)
 	queue_work(nvmet_wq, &req->f.work);
 }
 
+static void nvmet_file_abort_work(struct work_struct *w)
+{
+	struct nvmet_req *req = container_of(w, struct nvmet_req, f.work);
+
+	nvmet_req_complete(req, NVME_SC_ABORT_REQ);
+}
+
+static void nvmet_file_cancel_work(struct nvmet_req *req)
+{
+	if (cancel_work(&req->f.work)) {
+		INIT_WORK(&req->f.work, nvmet_file_abort_work);
+		queue_work(nvmet_wq, &req->f.work);
+	}
+}
+
 static void nvmet_file_write_zeroes_work(struct work_struct *w)
 {
 	struct nvmet_req *req = container_of(w, struct nvmet_req, f.work);
@@ -366,15 +381,19 @@ u16 nvmet_file_parse_io_cmd(struct nvmet_req *req)
 	case nvme_cmd_read:
 	case nvme_cmd_write:
 		req->execute = nvmet_file_execute_rw;
+		req->abort   = nvmet_file_cancel_work;
 		return 0;
 	case nvme_cmd_flush:
 		req->execute = nvmet_file_execute_flush;
+		req->abort   = nvmet_file_cancel_work;
 		return 0;
 	case nvme_cmd_dsm:
 		req->execute = nvmet_file_execute_dsm;
+		req->abort   = nvmet_file_cancel_work;
 		return 0;
 	case nvme_cmd_write_zeroes:
 		req->execute = nvmet_file_execute_write_zeroes;
+		req->abort   = nvmet_file_cancel_work;
 		return 0;
 	default:
 		return nvmet_report_invalid_opcode(req);
