@@ -757,11 +757,32 @@ static void __nvmet_req_complete(struct nvmet_req *req, u16 status)
 void nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
 	struct nvmet_sq *sq = req->sq;
+	unsigned long flags;
+
+	spin_lock_irqsave(&sq->state_lock, flags);
+
+	if (unlikely(req->aborted))
+		status = NVME_SC_ABORT_REQ;
+	else
+		list_del(&req->state_list);
+
+	spin_unlock_irqrestore(&sq->state_lock, flags);
 
 	__nvmet_req_complete(req, status);
 	percpu_ref_put(&sq->ref);
 }
 EXPORT_SYMBOL_GPL(nvmet_req_complete);
+
+void nvmet_req_abort(struct nvmet_req *req)
+{
+	lockdep_assert_held(&req->sq->state_lock);
+
+	if (req->abort)
+		req->abort(req);
+
+	req->aborted = true;
+	list_del_init(&req->state_list);
+}
 
 void nvmet_cq_setup(struct nvmet_ctrl *ctrl, struct nvmet_cq *cq,
 		u16 qid, u16 size)
@@ -803,6 +824,8 @@ void nvmet_sq_destroy(struct nvmet_sq *sq)
 	percpu_ref_exit(&sq->ref);
 	nvmet_auth_sq_free(sq);
 
+	WARN_ON_ONCE(!list_empty(&sq->state_list));
+
 	if (ctrl) {
 		/*
 		 * The teardown flow may take some time, and the host may not
@@ -836,6 +859,8 @@ int nvmet_sq_init(struct nvmet_sq *sq)
 	}
 	init_completion(&sq->free_done);
 	init_completion(&sq->confirm_done);
+	INIT_LIST_HEAD(&sq->state_list);
+	spin_lock_init(&sq->state_lock);
 	nvmet_auth_sq_init(sq);
 
 	return 0;
@@ -922,6 +947,7 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 		struct nvmet_sq *sq, const struct nvmet_fabrics_ops *ops)
 {
 	u8 flags = req->cmd->common.flags;
+	unsigned long sflags;
 	u16 status;
 
 	req->cq = cq;
@@ -978,6 +1004,12 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 	if (sq->ctrl)
 		sq->ctrl->reset_tbkas = true;
 
+	INIT_LIST_HEAD(&req->state_list);
+
+	spin_lock_irqsave(&sq->state_lock, sflags);
+	list_add_tail(&req->state_list, &sq->state_list);
+	spin_unlock_irqrestore(&sq->state_lock, sflags);
+
 	return true;
 
 fail:
@@ -988,6 +1020,12 @@ EXPORT_SYMBOL_GPL(nvmet_req_init);
 
 void nvmet_req_uninit(struct nvmet_req *req)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&req->sq->state_lock, flags);
+	list_del(&req->state_list);
+	spin_unlock_irqrestore(&req->sq->state_lock, flags);
+
 	percpu_ref_put(&req->sq->ref);
 	if (req->ns)
 		nvmet_put_namespace(req->ns);
