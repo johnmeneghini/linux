@@ -121,6 +121,7 @@ struct nvme_tcp_request {
 	size_t			offset;
 	size_t			data_sent;
 	enum nvme_tcp_send_state state;
+	bool			aborted;
 };
 
 enum nvme_tcp_queue_flags {
@@ -2448,6 +2449,8 @@ static enum blk_eh_timer_return nvme_tcp_timeout(struct request *rq)
 	struct nvme_tcp_cmd_pdu *pdu = nvme_tcp_req_cmd_pdu(req);
 	struct nvme_command *cmd = &pdu->cmd;
 	int qid = nvme_tcp_queue_id(req->queue);
+	int error;
+	u32 effects;
 
 	dev_warn(ctrl->device,
 		 "I/O tag %d (%04x) type %d opcode %#x (%s) QID %d timeout\n",
@@ -2472,10 +2475,25 @@ static enum blk_eh_timer_return nvme_tcp_timeout(struct request *rq)
 		return BLK_EH_DONE;
 	}
 
+	if (!req->aborted) {
+		effects = le32_to_cpu(ctrl->effects->iocs[nvme_cmd_cancel]);
+
+		if (!(effects & NVME_CMD_EFFECTS_CSUPP))
+			goto err_recovery;
+
+		error = nvme_submit_cancel_req(ctrl, rq, qid);
+		if (error)
+			goto err_recovery;
+
+		req->aborted = true;
+		return BLK_EH_RESET_TIMER;
+	}
+
 	/*
 	 * LIVE state should trigger the normal error recovery which will
 	 * handle completing this request.
 	 */
+err_recovery:
 	nvme_tcp_error_recovery(ctrl);
 	return BLK_EH_RESET_TIMER;
 }
@@ -2520,6 +2538,7 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 	req->pdu_len = 0;
 	req->pdu_sent = 0;
 	req->h2cdata_left = 0;
+	req->aborted = false;
 	req->data_len = blk_rq_nr_phys_segments(rq) ?
 				blk_rq_payload_bytes(rq) : 0;
 	req->curr_bio = rq->bio;
