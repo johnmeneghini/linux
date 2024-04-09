@@ -3301,7 +3301,7 @@ nvme_fc_reconnect_or_delete(struct nvme_fc_ctrl *ctrl, int status)
 	struct nvme_fc_rport *rport = ctrl->rport;
 	struct nvme_fc_remote_port *portptr = &rport->remoteport;
 	unsigned long recon_delay = ctrl->ctrl.opts->reconnect_delay * HZ;
-	bool recon = true;
+	bool recon = nvme_ctrl_reconnect(status);
 
 	if (nvme_ctrl_state(&ctrl->ctrl) != NVME_CTRL_CONNECTING)
 		return;
@@ -3310,8 +3310,6 @@ nvme_fc_reconnect_or_delete(struct nvme_fc_ctrl *ctrl, int status)
 		dev_info(ctrl->ctrl.device,
 			"NVME-FC{%d}: reset: Reconnect attempt failed (%d)\n",
 			ctrl->cnum, status);
-		if (status > 0 && (status & NVME_SC_DNR))
-			recon = false;
 	} else if (time_after_eq(jiffies, rport->dev_loss_end))
 		recon = false;
 
