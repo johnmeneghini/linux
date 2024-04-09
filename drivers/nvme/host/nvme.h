@@ -702,6 +702,30 @@ static inline bool nvme_is_path_error(u16 status)
 }
 
 /*
+ * Evaluate the status information returned by the LLDD in order to
+ * decided if a reconnect attempt should be scheduled.
+ *
+ * There are two cases where no reconnect attempt should be attempted:
+ *
+ * 1) The LLDD reports an negative status. There was an error (e.g. no
+ *    memory) on the host side and thus abort the operation.
+ *    Note, there are exception such as ENOTCONN which is
+ *    not an internal driver error, thus we filter these errors
+ *    out and retry later.
+ * 2) The DNR bit is set and the specification states no further
+ *    connect attempts with the same set of paramenters should be
+ *    attempted.
+ */
+static inline bool nvme_ctrl_reconnect(int status)
+{
+	if (status < 0 && status != -ENOTCONN)
+		return false;
+	else if (status > 0 && (status & NVME_SC_DNR))
+		return false;
+	return true;
+}
+
+/*
  * Fill in the status and result information from the CQE, and then figure out
  * if blk-mq will need to use IPI magic to complete the request, and if yes do
  * so.  If not let the caller complete the request without an indirect function
