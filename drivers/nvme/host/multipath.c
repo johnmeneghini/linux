@@ -749,7 +749,7 @@ static void nvme_update_ns_ana_state(struct nvme_ana_group_desc *desc,
 		struct nvme_ns *ns)
 {
 	ns->ana_grpid = le32_to_cpu(desc->grpid);
-	ns->ana_state = desc->state;
+	ns->ana_state = (desc->state == NVME_ANA_NONOPTIMIZED) ? NVME_ANA_OPTIMIZED : desc->state;
 	clear_bit(NVME_NS_ANA_PENDING, &ns->flags);
 	/*
 	 * nvme_mpath_set_live() will trigger I/O to the multipath path device
