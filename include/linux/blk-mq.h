@@ -1239,7 +1239,7 @@ int blk_nlat_init(struct gendisk *disk);
 #else
 static inline int blk_nlat_enable(struct gendisk *disk) { return 0; }
 static inline void blk_nlat_disable(struct gendisk *disk) {}
-u64 blk_nlat_latency(struct gendisk *disk, int node) { return 0; }
-static inline in blk_nlat_init(struct gendisk *disk) { return -ENOTSUPP; }
+static inline u64 blk_nlat_latency(struct gendisk *disk, int node) { return 0; }
+static inline int blk_nlat_init(struct gendisk *disk) { return -ENOTSUPP; }
 #endif
 #endif /* BLK_MQ_H */
