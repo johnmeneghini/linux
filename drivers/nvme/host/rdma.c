@@ -74,6 +74,7 @@ struct nvme_rdma_request {
 	struct nvme_rdma_sgl	data_sgl;
 	struct nvme_rdma_sgl	*metadata_sgl;
 	bool			use_sig_mr;
+	bool			aborted;
 };
 
 enum nvme_rdma_queue_flags {
@@ -1959,16 +1960,19 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 {
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	struct nvme_rdma_queue *queue = req->queue;
-	struct nvme_rdma_ctrl *ctrl = queue->ctrl;
+	struct nvme_rdma_ctrl *rdma_ctrl = queue->ctrl;
+	struct nvme_ctrl *ctrl = &rdma_ctrl->ctrl;
 	struct nvme_command *cmd = req->req.cmd;
 	int qid = nvme_rdma_queue_idx(queue);
+	int error;
+	u32 effects;
 
-	dev_warn(ctrl->ctrl.device,
+	dev_warn(ctrl->device,
 		 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout\n",
 		 rq->tag, nvme_cid(rq), cmd->common.opcode,
 		 nvme_fabrics_opcode_str(qid, cmd), qid);
 
-	if (nvme_ctrl_state(&ctrl->ctrl) != NVME_CTRL_LIVE) {
+	if (nvme_ctrl_state(ctrl) != NVME_CTRL_LIVE) {
 		/*
 		 * If we are resetting, connecting or deleting we should
 		 * complete immediately because we may block controller
@@ -1986,11 +1990,26 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 		return BLK_EH_DONE;
 	}
 
+	if (!req->aborted) {
+		effects = le32_to_cpu(ctrl->effects->iocs[nvme_cmd_cancel]);
+
+		if (!(effects & NVME_CMD_EFFECTS_CSUPP))
+			goto err_recovery;
+
+		error = nvme_submit_cancel_req(ctrl, rq, qid);
+		if (error)
+			goto err_recovery;
+
+		req->aborted = true;
+		return BLK_EH_RESET_TIMER;
+	}
+
 	/*
 	 * LIVE state should trigger the normal error recovery which will
 	 * handle completing this request.
 	 */
-	nvme_rdma_error_recovery(ctrl);
+err_recovery:
+	nvme_rdma_error_recovery(rdma_ctrl);
 	return BLK_EH_RESET_TIMER;
 }
 
@@ -2014,6 +2033,7 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return nvme_fail_nonready_command(&queue->ctrl->ctrl, rq);
 
 	dev = queue->device->dev;
+	req->aborted = false;
 
 	req->sqe.dma = ib_dma_map_single(dev, req->sqe.data,
 					 sizeof(struct nvme_command),
