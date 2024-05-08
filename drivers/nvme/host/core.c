@@ -3091,11 +3091,9 @@ static int nvme_init_effects(struct nvme_ctrl *ctrl, struct nvme_id_ctrl *id)
 	if (ctrl->effects)
 		return 0;
 
-	if (id->lpa & NVME_CTRL_LPA_CMD_EFFECTS_LOG) {
-		ret = nvme_get_effects_log(ctrl, NVME_CSI_NVM, &ctrl->effects);
-		if (ret < 0)
-			return ret;
-	}
+	ret = nvme_get_effects_log(ctrl, NVME_CSI_NVM, &ctrl->effects);
+	if (ret < 0)
+		return ret;
 
 	if (!ctrl->effects) {
 		ctrl->effects = kzalloc(sizeof(*ctrl->effects), GFP_KERNEL);
