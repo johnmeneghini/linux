@@ -4509,6 +4509,7 @@ int nvme_alloc_io_tag_set(struct nvme_ctrl *ctrl, struct blk_mq_tag_set *set,
 		unsigned int cmd_size)
 {
 	int ret;
+	u32 effects = le32_to_cpu(ctrl->effects->iocs[nvme_cmd_cancel]);
 
 	memset(set, 0, sizeof(*set));
 	set->ops = ops;
@@ -4519,9 +4520,13 @@ int nvme_alloc_io_tag_set(struct nvme_ctrl *ctrl, struct blk_mq_tag_set *set,
 	 */
 	if (ctrl->quirks & NVME_QUIRK_SHARED_TAGS)
 		set->reserved_tags = NVME_AQ_DEPTH;
+	else if  (effects & NVME_CMD_EFFECTS_CSUPP)
+		/* Reserve 2 X io_queue count for NVMe Cancel */
+		set->reserved_tags = (2 * ctrl->queue_count);
 	else if (ctrl->ops->flags & NVME_F_FABRICS)
 		/* Reserved for fabric connect */
 		set->reserved_tags = 1;
+
 	set->numa_node = ctrl->numa_node;
 	set->flags = BLK_MQ_F_SHOULD_MERGE;
 	if (ctrl->ops->flags & NVME_F_BLOCKING)
