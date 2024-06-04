@@ -2979,12 +2979,16 @@ static enum rq_end_io_ret nvme_cancel_endio(struct request *req, blk_status_t er
 
 	result = le32_to_cpu(nvme_req(req)->result.u32);
 
-	def_abrts = upper_16_bits(result);
-	imm_abrts = lower_16_bits(result);
+	if (!status) {
+		def_abrts = upper_16_bits(result);
+		imm_abrts = lower_16_bits(result);
 
-	dev_warn(ctrl->device,
-		 "Cancel status: 0x%x imm abrts = %u def abrts = %u",
-		 status, imm_abrts, def_abrts);
+		dev_warn(ctrl->device,
+			 "Cancel status: 0 imm abrts = %u def abrts = %u",
+			 imm_abrts, def_abrts);
+	} else {
+		dev_warn(ctrl->device, "Cancel status: 0x%x", status);
+	}
 
 	blk_mq_free_request(req);
 	return RQ_END_IO_NONE;
@@ -2996,11 +3000,14 @@ int nvme_submit_cancel_req(struct nvme_ctrl *ctrl, struct request *rq,
 	struct nvme_command c = { };
 	struct request *cancel_req;
 
+	if (sqid == 0)
+		return -EINVAL;
+
 	c.cancel.opcode = nvme_cmd_cancel;
 	c.cancel.cid = nvme_cid(rq);
 	c.cancel.sqid = cpu_to_le32(sqid);
 	c.cancel.nsid = NVME_NSID_ALL;
-	c.cancel.action = cpu_to_le32(NVME_CANCEL_ACTION_SINGLE_CMD);
+	c.cancel.action = NVME_CANCEL_ACTION_SINGLE_CMD;
 
 	cancel_req = blk_mq_alloc_request_hctx(rq->q, nvme_req_op(&c),
 					       BLK_MQ_REQ_NOWAIT |
