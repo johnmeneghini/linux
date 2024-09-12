@@ -74,6 +74,7 @@ struct nvme_rdma_request {
 	struct nvme_rdma_sgl	data_sgl;
 	struct nvme_rdma_sgl	*metadata_sgl;
 	bool			use_sig_mr;
+	bool			aborted;
 };
 
 enum nvme_rdma_queue_flags {
@@ -97,6 +98,7 @@ struct nvme_rdma_queue {
 	struct completion	cm_done;
 	bool			pi_support;
 	int			cq_size;
+	atomic_t		cancel_free_cmds;
 	struct mutex		queue_lock;
 };
 
@@ -575,6 +577,7 @@ static int nvme_rdma_alloc_queue(struct nvme_rdma_ctrl *ctrl,
 
 	queue = &ctrl->queues[idx];
 	mutex_init(&queue->queue_lock);
+	atomic_set(&queue->cancel_free_cmds, NVME_RSV_CANCEL_MAX);
 	queue->ctrl = ctrl;
 	if (idx && ctrl->ctrl.max_integrity_segments)
 		queue->pi_support = true;
@@ -1961,16 +1964,19 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 {
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	struct nvme_rdma_queue *queue = req->queue;
-	struct nvme_rdma_ctrl *ctrl = queue->ctrl;
+	struct nvme_rdma_ctrl *rdma_ctrl = queue->ctrl;
+	struct nvme_ctrl *ctrl = &rdma_ctrl->ctrl;
 	struct nvme_command *cmd = req->req.cmd;
 	int qid = nvme_rdma_queue_idx(queue);
+	int error, action;
+	int cancel_free_cmds;
 
-	dev_warn(ctrl->ctrl.device,
+	dev_warn(ctrl->device,
 		 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout\n",
 		 rq->tag, nvme_cid(rq), cmd->common.opcode,
 		 nvme_fabrics_opcode_str(qid, cmd), qid);
 
-	if (nvme_ctrl_state(&ctrl->ctrl) != NVME_CTRL_LIVE) {
+	if (nvme_ctrl_state(ctrl) != NVME_CTRL_LIVE) {
 		/*
 		 * If we are resetting, connecting or deleting we should
 		 * complete immediately because we may block controller
@@ -1988,11 +1994,41 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 		return BLK_EH_DONE;
 	}
 
+	if (!req->aborted) {
+		if (!nvme_io_command_supported(ctrl, nvme_cmd_cancel))
+			goto err_recovery;
+
+		cancel_free_cmds = atomic_dec_return(&queue->cancel_free_cmds);
+		if (cancel_free_cmds < 0) {
+			/* No free reserved commands.
+			 * This means a "multiple commands" cancel
+			 * is currently under execution, mark this
+			 * request as aborted and reset the timer.
+			 */
+			atomic_inc(&queue->cancel_free_cmds);
+			goto abort;
+		}
+
+		if (cancel_free_cmds > 0)
+			action = NVME_CANCEL_ACTION_SINGLE_CMD;
+		else
+			action = NVME_CANCEL_ACTION_MUL_CMD;
+
+		error = nvme_submit_cancel_req(ctrl, rq, qid, action);
+		if (error)
+			goto err_recovery;
+
+abort:
+		req->aborted = true;
+		return BLK_EH_RESET_TIMER;
+	}
+
 	/*
 	 * LIVE state should trigger the normal error recovery which will
 	 * handle completing this request.
 	 */
-	nvme_rdma_error_recovery(ctrl);
+err_recovery:
+	nvme_rdma_error_recovery(rdma_ctrl);
 	return BLK_EH_RESET_TIMER;
 }
 
@@ -2016,6 +2052,7 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return nvme_fail_nonready_command(&queue->ctrl->ctrl, rq);
 
 	dev = queue->device->dev;
+	req->aborted = false;
 
 	req->sqe.dma = ib_dma_map_single(dev, req->sqe.data,
 					 sizeof(struct nvme_command),
@@ -2120,6 +2157,9 @@ static void nvme_rdma_complete_rq(struct request *rq)
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	struct nvme_rdma_queue *queue = req->queue;
 	struct ib_device *ibdev = queue->device->dev;
+	struct nvme_command *cmd = req->req.cmd;
+	bool free_cancel = (cmd->common.opcode == nvme_cmd_cancel);
+	int c;
 
 	if (req->use_sig_mr)
 		nvme_rdma_check_pi_status(req);
@@ -2128,6 +2168,10 @@ static void nvme_rdma_complete_rq(struct request *rq)
 	ib_dma_unmap_single(ibdev, req->sqe.dma, sizeof(struct nvme_command),
 			    DMA_TO_DEVICE);
 	nvme_complete_rq(rq);
+	if (free_cancel) {
+		c = atomic_inc_return(&queue->cancel_free_cmds);
+		WARN_ON_ONCE(c > NVME_RSV_CANCEL_MAX);
+	}
 }
 
 static void nvme_rdma_map_queues(struct blk_mq_tag_set *set)
