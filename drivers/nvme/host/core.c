@@ -3065,6 +3065,67 @@ int nvme_get_log(struct nvme_ctrl *ctrl, u32 nsid, u8 log_page, u8 lsp, u8 csi,
 	return nvme_submit_sync_cmd(ctrl->admin_q, &c, log, size);
 }
 
+static enum rq_end_io_ret nvme_cancel_endio(struct request *req, blk_status_t error)
+{
+	struct nvme_ctrl *ctrl = req->end_io_data;
+	u32 result;
+	u16 imm_abrts, def_abrts;
+	u16 status = nvme_req(req)->status;
+
+	if (!status) {
+		result = le32_to_cpu(nvme_req(req)->result.u32);
+		def_abrts = upper_16_bits(result);
+		imm_abrts = lower_16_bits(result);
+
+		dev_warn(ctrl->device,
+			 "Cancel status: 0x0 imm abrts = %u def abrts = %u",
+			 imm_abrts, def_abrts);
+	} else {
+		dev_warn(ctrl->device, "Cancel status: 0x%x", status);
+	}
+
+	blk_mq_free_request(req);
+	return RQ_END_IO_NONE;
+}
+
+int nvme_submit_cancel_req(struct nvme_ctrl *ctrl, struct request *rq,
+			   unsigned int sqid, int action)
+{
+	struct nvme_command c = { };
+	struct request *cancel_req;
+
+	if (sqid == 0)
+		return -EINVAL;
+
+	c.cancel.opcode = nvme_cmd_cancel;
+	c.cancel.sqid = cpu_to_le32(sqid);
+	c.cancel.nsid = NVME_NSID_ALL;
+	c.cancel.action = action;
+	if (action == NVME_CANCEL_ACTION_SINGLE_CMD)
+		c.cancel.cid = nvme_cid(rq);
+	else
+		c.cancel.cid = 0xFFFF;
+
+	cancel_req = blk_mq_alloc_request_hctx(rq->q, nvme_req_op(&c),
+					       BLK_MQ_REQ_NOWAIT |
+					       BLK_MQ_REQ_RESERVED,
+					       sqid - 1);
+	if (IS_ERR(cancel_req)) {
+		dev_warn(ctrl->device, "%s: Could not allocate the Cancel "
+					"command", __func__);
+		return PTR_ERR(cancel_req);
+	}
+
+	nvme_init_request(cancel_req, &c);
+	cancel_req->end_io = nvme_cancel_endio;
+	cancel_req->end_io_data = ctrl;
+
+	blk_execute_rq_nowait(cancel_req, false);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(nvme_submit_cancel_req);
+
 static int nvme_get_effects_log(struct nvme_ctrl *ctrl, u8 csi,
 				struct nvme_effects_log **log)
 {
