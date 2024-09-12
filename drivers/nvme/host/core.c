@@ -4604,9 +4604,14 @@ int nvme_alloc_io_tag_set(struct nvme_ctrl *ctrl, struct blk_mq_tag_set *set,
 	 */
 	if (ctrl->quirks & NVME_QUIRK_SHARED_TAGS)
 		set->reserved_tags = NVME_AQ_DEPTH;
-	else if (ctrl->ops->flags & NVME_F_FABRICS)
+	else if (ctrl->ops->flags & NVME_F_FABRICS) {
 		/* Reserved for fabric connect */
 		set->reserved_tags = 1;
+		if (nvme_io_command_supported(ctrl, nvme_cmd_cancel)) {
+			/* Reserved for cancel commands */
+			set->reserved_tags += NVME_RSV_CANCEL_MAX;
+		}
+	}
 	set->numa_node = ctrl->numa_node;
 	set->flags = BLK_MQ_F_SHOULD_MERGE;
 	if (ctrl->ops->flags & NVME_F_BLOCKING)
