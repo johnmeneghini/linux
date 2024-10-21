@@ -1009,6 +1009,15 @@ static int test_ready(struct scsi_tape *STp, int do_wait)
 			scode = cmdstatp->sense_hdr.sense_key;
 
 			if (scode == UNIT_ATTENTION) { /* New media? */
+
+				/* If we hit a power on/reset during test unit
+				 * ready and it isn't the result of a device
+				 * reset then it's safe to clear pos_unknown.
+				 */
+				if (cmdstatp->sense_hdr.asc == 0x29)
+					STp->pos_unknown = (STp->device->was_reset) ?
+						STp->pos_unknown : 0;
+
 				new_session = 1;
 				if (attentions < MAX_ATTENTIONS) {
 					attentions++;
