@@ -85,7 +85,8 @@ static int max_sg_segs;
 static int try_direct_io = TRY_DIRECT_IO;
 static int try_rdio = 1;
 static int try_wdio = 1;
-static int debug_flag;
+static int debug_flag = 1;
+static int porua_pos = 1;
 
 static const struct class st_sysfs_class;
 static const struct attribute_group *st_dev_groups[];
@@ -116,6 +117,9 @@ module_param_named(try_rdio, try_rdio, int, 0);
 MODULE_PARM_DESC(try_rdio, "Try direct read i/o when possible");
 module_param_named(try_wdio, try_wdio, int, 0);
 MODULE_PARM_DESC(try_wdio, "Try direct write i/o when possible");
+module_param_named(porua_pos, porua_pos, int, 0);
+MODULE_PARM_DESC(porua_pos, "Set position lost after POR unit attention");
+
 
 #ifndef MODULE
 static int write_threshold_kbs;  /* retained for compatibility */
@@ -137,6 +141,9 @@ static struct st_dev_parm {
 	},
 	{
 		"debug_flag", &debug_flag
+	},
+	{
+		"porua_pos", &porua_pos
 	}
 };
 #endif
@@ -413,8 +420,14 @@ static int st_chk_result(struct scsi_tape *STp, struct st_request * SRpnt)
 	if (cmdstatp->have_sense &&
 	    cmdstatp->sense_hdr.asc == 0 && cmdstatp->sense_hdr.ascq == 0x17)
 		STp->cleaning_req = 1; /* ASC and ASCQ => cleaning requested */
-	if (cmdstatp->have_sense && scode == UNIT_ATTENTION && cmdstatp->sense_hdr.asc == 0x29)
-		STp->pos_unknown = 1; /* ASC => power on / reset */
+	if (cmdstatp->have_sense && scode == UNIT_ATTENTION && cmdstatp->sense_hdr.asc == 0x29) {
+		if (porua_pos) {
+			DEBC_printk(STp, "%s: %d: setting pos_unkown from 0x%x to 0x1\n", __func__, __LINE__, STp->pos_unknown);
+			STp->pos_unknown = 1; /* ASC => power on / reset */
+		}
+	}
+
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
 
 	STp->pos_unknown |= STp->device->was_reset;
 
@@ -834,6 +847,8 @@ static int flush_buffer(struct scsi_tape *STp, int seek_next)
 	int backspace, result;
 	struct st_partstat *STps;
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
+
 	if (STp->ready != ST_READY)
 		return 0;
 
@@ -937,6 +952,8 @@ static void reset_state(struct scsi_tape *STp)
 {
 	int i;
 	struct st_partstat *STps;
+
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
 
 	STp->pos_unknown = 0;
 	for (i = 0; i < ST_NBR_PARTITIONS; i++) {
@@ -1059,6 +1076,9 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 	struct inode *inode = file_inode(filp);
 	int mode = TAPE_MODE(inode);
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__,
+			STp->pos_unknown, STp->device->was_reset, STp->ready);
+
 	STp->ready = ST_READY;
 
 	if (mode != STp->current_mode) {
@@ -1078,6 +1098,8 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 	if (retval < 0)
 	    goto err_out;
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__,
+			STp->pos_unknown, STp->device->was_reset, STp->ready);
 	if (retval == CHKRES_NEW_SESSION) {
 		STp->pos_unknown = 0;
 		STp->partition = STp->new_partition = 0;
@@ -1110,6 +1132,8 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 			STp->ps[0].drv_file = STp->ps[0].drv_block = (-1);
 			STp->partition = STp->new_partition = 0;
 			STp->door_locked = ST_UNLOCKED;
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__,
+			STp->pos_unknown, STp->device->was_reset, STp->ready);
 			return CHKRES_NOT_READY;
 		}
 	}
@@ -1246,9 +1270,13 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 		}
 	}
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__,
+			STp->pos_unknown, STp->device->was_reset, STp->ready);
 	return CHKRES_READY;
 
  err_out:
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %d\n", __func__, __LINE__,
+			STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 	return retval;
 }
 
@@ -1361,6 +1389,8 @@ static int st_flush(struct file *filp, fl_owner_t id)
 	if (file_count(filp) > 1)
 		return 0;
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
+
 	if (STps->rw == ST_WRITING && !STp->pos_unknown) {
 		result = st_flush_write_buffer(STp);
 		if (result != 0 && result != (-ENOSPC))
@@ -1380,6 +1410,8 @@ static int st_flush(struct file *filp, fl_owner_t id)
 			  "Number of r/w requests %d, dio used in %d, "
 			  "pages %d.\n", STp->nbr_requests, STp->nbr_dio,
 			  STp->nbr_pages));
+
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
 
 	if (STps->rw == ST_WRITING && !STp->pos_unknown) {
 		struct st_cmdstatus *cmdstatp = &STp->buffer->cmdstat;
@@ -1495,6 +1527,8 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 	 */
 	if (!scsi_block_when_processing_errors(STp->device)) {
 		retval = (-ENXIO);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 		goto out;
 	}
 
@@ -1503,11 +1537,15 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 			retval = (-ENOMEDIUM);
 		else
 			retval = (-EIO);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 		goto out;
 	}
 
 	if (! STp->modes[STp->current_mode].defined) {
 		retval = (-ENXIO);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 		goto out;
 	}
 
@@ -1518,6 +1556,8 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 	 */
 	if (STp->pos_unknown) {
 		retval = (-EIO);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 		goto out;
 	}
 
@@ -1529,6 +1569,8 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 		st_printk(ST_DEB_MSG, STp,
 			  "Incorrect device.\n");
 		retval = (-EIO);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
 		goto out;
 	} ) /* end DEB */
 
@@ -1539,6 +1581,9 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 	if (STp->block_size == 0 && STp->max_block > 0 &&
 	    (count < STp->min_block || count > STp->max_block)) {
 		retval = (-EINVAL);
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %ld\n",
+				__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready, retval);
+
 		goto out;
 	}
 
@@ -3573,6 +3618,8 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 			goto out;
 		}
 
+		DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n", __func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
+
 		if (!STp->pos_unknown) {
 
 			if (STps->eof == ST_FM_HIT) {
@@ -4467,6 +4514,8 @@ static int __init init_st(void)
 			debugging);
 	}
 
+	printk(KERN_INFO "st: porua_pos = %d\n", porua_pos);
+
 	err = class_register(&st_sysfs_class);
 	if (err) {
 		pr_err("Unable register sysfs class for SCSI tapes\n");
@@ -4534,6 +4583,27 @@ static ssize_t version_show(struct device_driver *ddd, char *buf)
 }
 static DRIVER_ATTR_RO(version);
 
+static ssize_t porua_pos_store(struct device_driver *ddp,
+	const char *buf, size_t count)
+{
+	if (count > 0) {
+		if (buf[0] == '0') {
+			porua_pos = 0;
+			return count;
+		} else if (buf[0] == '1') {
+			porua_pos = 1;
+			return count;
+		}
+	}
+	return -EINVAL;
+}
+static ssize_t porua_pos_show(struct device_driver *ddp, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", porua_pos);
+}
+static DRIVER_ATTR_RW(porua_pos);
+
+
 #if DEBUG
 static ssize_t debug_flag_store(struct device_driver *ddp,
 	const char *buf, size_t count)
@@ -4559,6 +4629,7 @@ static ssize_t debug_flag_show(struct device_driver *ddp, char *buf)
 	return scnprintf(buf, PAGE_SIZE, "%d\n", debugging);
 }
 static DRIVER_ATTR_RW(debug_flag);
+
 #endif
 
 static struct attribute *st_drv_attrs[] = {
@@ -4566,6 +4637,7 @@ static struct attribute *st_drv_attrs[] = {
 	&driver_attr_fixed_buffer_size.attr,
 	&driver_attr_max_sg_segs.attr,
 	&driver_attr_version.attr,
+	&driver_attr_porua_pos.attr,
 #if DEBUG
 	&driver_attr_debug_flag.attr,
 #endif
