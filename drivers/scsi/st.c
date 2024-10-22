@@ -418,6 +418,10 @@ static int st_chk_result(struct scsi_tape *STp, struct st_request * SRpnt)
 
 	STp->pos_unknown |= STp->device->was_reset;
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x, result %d\n",
+			__func__, __LINE__, STp->pos_unknown, STp->device->was_reset,
+			STp->ready, result);
+
 	if (cmdstatp->have_sense &&
 	    scode == RECOVERED_ERROR
 #if ST_RECOVERED_WRITE_FATAL
@@ -1050,6 +1054,10 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 	struct inode *inode = file_inode(filp);
 	int mode = TAPE_MODE(inode);
 
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x\n",
+			__func__, __LINE__, STp->pos_unknown,
+			STp->device->was_reset, STp->ready);
+
 	STp->ready = ST_READY;
 
 	if (mode != STp->current_mode) {
@@ -1085,6 +1093,10 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 			STps->drv_file = 0;
 		}
 		new_session = 1;
+		DEBC_printk(STp, "%s: %d: CHKRES_NEW_SESSION pos_unknown"
+				" 0x%x was_reset 0x%x ready 0x%x\n",
+				__func__, __LINE__, STp->pos_unknown,
+				STp->device->was_reset, STp->ready);
 	}
 	else {
 		STp->cleaning_req |= saved_cleaning;
@@ -1101,6 +1113,12 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 			STp->ps[0].drv_file = STp->ps[0].drv_block = (-1);
 			STp->partition = STp->new_partition = 0;
 			STp->door_locked = ST_UNLOCKED;
+
+			DEBC_printk(STp, "%s: %d: CHKRES_NOT_READY pos_unknown 0x%x"
+				" was_reset 0x%x ready 0x%x retval %d\n",
+				__func__, __LINE__, STp->pos_unknown,
+				STp->device->was_reset, STp->ready, retval);
+
 			return CHKRES_NOT_READY;
 		}
 	}
@@ -1237,9 +1255,15 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 		}
 	}
 
+	DEBC_printk(STp, "%s: %d: CHKRES_READY pos_unknown 0x%x was_reset 0x%x ready 0x%x\n",
+			__func__, __LINE__, STp->pos_unknown, STp->device->was_reset, STp->ready);
+
 	return CHKRES_READY;
 
  err_out:
+	DEBC_printk(STp, "%s: %d: pos_unknown 0x%x was_reset 0x%x ready 0x%x retval %d\n",
+			__func__, __LINE__, STp->pos_unknown, STp->device->was_reset,
+			STp->ready, retval);
 	return retval;
 }
 
@@ -4550,6 +4574,7 @@ static ssize_t debug_flag_show(struct device_driver *ddp, char *buf)
 	return scnprintf(buf, PAGE_SIZE, "%d\n", debugging);
 }
 static DRIVER_ATTR_RW(debug_flag);
+
 #endif
 
 static struct attribute *st_drv_attrs[] = {
