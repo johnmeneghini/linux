@@ -413,8 +413,11 @@ static int st_chk_result(struct scsi_tape *STp, struct st_request * SRpnt)
 	if (cmdstatp->have_sense &&
 	    cmdstatp->sense_hdr.asc == 0 && cmdstatp->sense_hdr.ascq == 0x17)
 		STp->cleaning_req = 1; /* ASC and ASCQ => cleaning requested */
-	if (cmdstatp->have_sense && scode == UNIT_ATTENTION && cmdstatp->sense_hdr.asc == 0x29)
+	if (cmdstatp->have_sense && scode == UNIT_ATTENTION && cmdstatp->sense_hdr.asc == 0x29) {
+		DEBC_printk(STp, "%s: setting pos_unknown, was_reset %x, ready %x\n",
+			__func__, STp->device->was_reset, STp->ready);
 		STp->pos_unknown = 1; /* ASC => power on / reset */
+	}
 
 	STp->pos_unknown |= STp->device->was_reset;
 
@@ -1074,6 +1077,8 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 	    goto err_out;
 
 	if (retval == CHKRES_NEW_SESSION) {
+		DEBC_printk(STp, "%s: clearing pos_unknown, was_reset %x, ready %x\n",
+			__func__, STp->device->was_reset, STp->ready);
 		STp->pos_unknown = 0;
 		STp->device->was_reset = 0;
 		STp->partition = STp->new_partition = 0;
@@ -1106,6 +1111,7 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 			STp->ps[0].drv_file = STp->ps[0].drv_block = (-1);
 			STp->partition = STp->new_partition = 0;
 			STp->door_locked = ST_UNLOCKED;
+
 			return CHKRES_NOT_READY;
 		}
 	}
@@ -3634,6 +3640,8 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 				goto out;
 			}
 			reset_state(STp);
+			DEBC_printk(STp, "%s: clearing pos_unknown, was_reset %x, ready %x\n",
+				__func__, STp->device->was_reset, STp->ready);
 			STp->pos_unknown = 0;
 			/* remove this when the midlevel properly clears was_reset */
 			STp->device->was_reset = 0;
