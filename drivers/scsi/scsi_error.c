@@ -928,8 +928,8 @@ static enum scsi_disposition scsi_try_bus_reset(struct scsi_cmnd *scmd)
 
 static void __scsi_report_device_reset(struct scsi_device *sdev, void *data)
 {
-	sdev->was_reset = 1;
-	sdev->expecting_cc_ua = 1;
+	sdev->was_reset = (sdev->was_reset) ? 0 : 1;
+	sdev->expecting_cc_ua = (sdev->expecting_cc_ua) ? 0 : 1;
 }
 
 /**
