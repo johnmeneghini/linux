@@ -85,7 +85,7 @@ static int max_sg_segs;
 static int try_direct_io = TRY_DIRECT_IO;
 static int try_rdio = 1;
 static int try_wdio = 1;
-static int debug_flag;
+static int debug_flag = 1;
 
 static const struct class st_sysfs_class;
 static const struct attribute_group *st_dev_groups[];
