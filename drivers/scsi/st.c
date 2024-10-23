@@ -999,6 +999,11 @@ static int test_ready(struct scsi_tape *STp, int do_wait)
 			scode = cmdstatp->sense_hdr.sense_key;
 
 			if (scode == UNIT_ATTENTION) { /* New media? */
+				if (cmdstatp->sense_hdr.asc == 0x29) {
+					/* The position has been lost */
+					retval = (-EIO);
+					break;
+				}
 				new_session = 1;
 				if (attentions < MAX_ATTENTIONS) {
 					attentions++;
@@ -1083,6 +1088,7 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 
 	if (retval == CHKRES_NEW_SESSION) {
 		STp->pos_unknown = 0;
+		STp->device->was_reset = 0;
 		STp->partition = STp->new_partition = 0;
 		if (STp->can_partitions)
 			STp->nbr_partitions = 1; /* This guess will be updated later
