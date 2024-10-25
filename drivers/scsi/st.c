@@ -1114,6 +1114,8 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 			STp->ps[0].drv_file = STp->ps[0].drv_block = (-1);
 			STp->partition = STp->new_partition = 0;
 			STp->door_locked = ST_UNLOCKED;
+			STp->pos_unknown = 0;
+			STp->device->was_reset = 0;
 
 			DEBC_printk(STp, "%s: %d: CHKRES_NOT_READY pos_unknown 0x%x"
 				" was_reset 0x%x ready 0x%x retval %d\n",
