@@ -351,6 +351,9 @@ static void st_analyze_sense(struct st_request *SRpnt, struct st_cmdstatus *s)
 	}
 }
 
+static bool st_pos_unknown(struct scsi_tape *STp) {
+	return (STp->pos_unknown != 0);
+}
 
 /* Convert the result to success code */
 static int st_chk_result(struct scsi_tape *STp, struct st_request * SRpnt)
@@ -1404,7 +1407,7 @@ static int st_flush(struct file *filp, fl_owner_t id)
 			  "pages %d.\n", STp->nbr_requests, STp->nbr_dio,
 			  STp->nbr_pages));
 
-	if (STps->rw == ST_WRITING && !STp->pos_unknown) {
+	if (STps->rw == ST_WRITING && !st_pos_unknown(STp)) {
 		struct st_cmdstatus *cmdstatp = &STp->buffer->cmdstat;
 
 #if DEBUG
@@ -1539,7 +1542,7 @@ static ssize_t rw_checks(struct scsi_tape *STp, struct file *filp, size_t count)
 	 * If there was a bus reset, block further access
 	 * to this device.
 	 */
-	if (STp->pos_unknown) {
+	if (st_pos_unknown(STp)) {
 		retval = (-EIO);
 		goto out;
 	}
@@ -3596,7 +3599,7 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 			goto out;
 		}
 
-		if (!STp->pos_unknown) {
+		if (!st_pos_unknown(STp)) {
 
 			if (STps->eof == ST_FM_HIT) {
 				if (mtc.mt_op == MTFSF || mtc.mt_op == MTFSFM ||
