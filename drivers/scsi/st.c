@@ -999,6 +999,11 @@ static int test_ready(struct scsi_tape *STp, int do_wait)
 			scode = cmdstatp->sense_hdr.sense_key;
 
 			if (scode == UNIT_ATTENTION) { /* New media? */
+				if (cmdstatp->sense_hdr.asc == 0x29) {
+					/* The position has been lost */
+					retval = (-EIO);
+					break;
+				}
 				new_session = 1;
 				if (attentions < MAX_ATTENTIONS) {
 					attentions++;
