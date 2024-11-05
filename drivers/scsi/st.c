@@ -938,7 +938,6 @@ static void reset_state(struct scsi_tape *STp)
 	int i;
 	struct st_partstat *STps;
 
-	STp->pos_unknown = 0;
 	for (i = 0; i < ST_NBR_PARTITIONS; i++) {
 		STps = &(STp->ps[i]);
 		STps->rw = ST_IDLE;
@@ -3635,6 +3634,7 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 				goto out;
 			}
 			reset_state(STp);
+			STp->pos_unknown = 0;
 			/* remove this when the midlevel properly clears was_reset */
 			STp->device->was_reset = 0;
 		}
@@ -3746,7 +3746,6 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 		if (cmd_mtiocget && STp->pos_unknown) {
 			/* flush fails -> modify status accordingly */
 			reset_state(STp);
-			STp->pos_unknown = 1;
 		} else { /* return error */
 			retval = i;
 			goto out;
