@@ -1073,7 +1073,6 @@ static int check_tape(struct scsi_tape *STp, struct file *filp)
 	    goto err_out;
 
 	if (retval == CHKRES_NEW_SESSION) {
-		STp->pos_unknown = 0;
 		STp->partition = STp->new_partition = 0;
 		if (STp->can_partitions)
 			STp->nbr_partitions = 1; /* This guess will be updated later
