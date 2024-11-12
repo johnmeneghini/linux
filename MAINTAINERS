@@ -16498,6 +16498,7 @@ S:	Supported
 W:	http://git.infradead.org/nvme.git
 T:	git git://git.infradead.org/nvme.git
 F:	drivers/nvme/target/
+F:	drivers/nvme/target/io-cmd-cancel.c
 
 NVMEM FRAMEWORK
 M:	Srinivas Kandagatla <srinivas.kandagatla@linaro.org>

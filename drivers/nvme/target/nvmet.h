@@ -631,6 +631,7 @@ void __exit nvmet_exit_configfs(void);
 int __init nvmet_init_discovery(void);
 void nvmet_exit_discovery(void);
 
+extern bool emulate_cancel_support;
 extern struct nvmet_subsys *nvmet_disc_subsys;
 extern struct rw_semaphore nvmet_config_sem;
 
@@ -658,6 +659,8 @@ void nvmet_execute_identify_ns_zns(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_recv(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_send(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_append(struct nvmet_req *req);
+
+void nvmet_execute_cancel(struct nvmet_req *req);
 
 static inline u32 nvmet_rw_data_len(struct nvmet_req *req)
 {
