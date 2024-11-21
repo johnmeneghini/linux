@@ -28,6 +28,7 @@
 #include <linux/time.h>
 #include <linux/interrupt.h>
 #include <scsi/scsi_host.h>
+#include <scsi/scsi_cmnd.h>
 
 #include "aacraid.h"
 
