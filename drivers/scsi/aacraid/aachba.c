@@ -328,6 +328,12 @@ MODULE_PARM_DESC(wwn, "Select a WWN type for the arrays:\n"
 	"\t1 - Array Meta Data Signature (default)\n"
 	"\t2 - Adapter Serial Number");
 
+int aac_cpu_offline_feature = 0;
+module_param_named(aac_cpu_offline_feature, aac_cpu_offline_feature, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(aac_cpu_offline_feature, "This feature enables CPU offline feature and  "
+	"may result in IO performance drop in some cases\n"
+	"\t 0 - Disble\n"
+	"\t 1 - Enable \n");
 
 static inline int aac_valid_context(struct scsi_cmnd *scsicmd,
 		struct fib *fibptr) {
