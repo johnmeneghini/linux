@@ -1752,6 +1752,11 @@ ssize_t nvmet_ctrl_host_traddr(struct nvmet_ctrl *ctrl,
 	return ctrl->ops->host_traddr(ctrl, traddr, traddr_len);
 }
 
+void nvmet_execute_request(struct nvmet_req *req) {
+	req->execute(req);
+}
+EXPORT_SYMBOL_GPL(nvmet_execute_request);
+
 static struct nvmet_subsys *nvmet_find_get_subsys(struct nvmet_port *port,
 		const char *subsysnqn)
 {

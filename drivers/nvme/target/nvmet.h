@@ -939,4 +939,5 @@ struct nvmet_feat_arbitration {
 	u8		ab;
 };
 
+void nvmet_execute_request(struct nvmet_req *req);
 #endif /* _NVMET_H */
