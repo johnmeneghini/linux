@@ -810,6 +810,9 @@ void nvmet_req_complete(struct nvmet_req *req, u16 status)
 	struct nvmet_sq *sq = req->sq;
 
 	__nvmet_req_complete(req, status);
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	xa_erase(&sq->outstanding_requests, req->cmd->common.command_id);
+#endif
 	percpu_ref_put(&sq->ref);
 }
 EXPORT_SYMBOL_GPL(nvmet_req_complete);
@@ -980,7 +983,9 @@ int nvmet_sq_init(struct nvmet_sq *sq)
 	init_completion(&sq->free_done);
 	init_completion(&sq->confirm_done);
 	nvmet_auth_sq_init(sq);
-
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	xa_init(&sq->outstanding_requests);
+#endif
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvmet_sq_init);
@@ -1752,10 +1757,19 @@ ssize_t nvmet_ctrl_host_traddr(struct nvmet_ctrl *ctrl,
 	return ctrl->ops->host_traddr(ctrl, traddr, traddr_len);
 }
 
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
 void nvmet_execute_request(struct nvmet_req *req) {
+	int ret = xa_insert(&req->sq->outstanding_requests,
+			    req->cmd->common.command_id, req, GFP_KERNEL);
+	if (ret) {
+		pr_err("nvmet failure to insert command %d",
+		       req->cmd->common.command_id);
+		return;
+	}
 	req->execute(req);
 }
 EXPORT_SYMBOL_GPL(nvmet_execute_request);
+#endif
 
 static struct nvmet_subsys *nvmet_find_get_subsys(struct nvmet_port *port,
 		const char *subsysnqn)
