@@ -172,6 +172,9 @@ struct nvmet_sq {
 #endif
 	struct completion	free_done;
 	struct completion	confirm_done;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	struct xarray		outstanding_requests;
+#endif
 };
 
 struct nvmet_ana_group {
@@ -967,5 +970,9 @@ struct nvmet_feat_arbitration {
 	u8		ab;
 };
 
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
 void nvmet_execute_request(struct nvmet_req *req);
+#else
+static inline void nvmet_execute_request(struct nvmet_req *req) { req->execute(req); }
+#endif
 #endif /* _NVMET_H */
