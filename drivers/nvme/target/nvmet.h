@@ -488,6 +488,9 @@ struct nvmet_req {
 	u16			error_loc;
 	u64			error_slba;
 	struct nvmet_pr_per_ctrl_ref *pc_ref;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	struct delayed_work req_work;
+#endif
 };
 
 #define NVMET_MAX_MPOOL_BVEC		16

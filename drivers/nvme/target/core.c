@@ -7,6 +7,7 @@
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/rculist.h>
+#include <linux/workqueue.h>
 #include <linux/pci-p2pdma.h>
 #include <linux/scatterlist.h>
 
@@ -1121,6 +1122,10 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+static void nvmet_delayed_execute_req(struct work_struct *work);
+#endif
+
 bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 		struct nvmet_sq *sq, const struct nvmet_fabrics_ops *ops)
 {
@@ -1185,6 +1190,9 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 
 	if (sq->ctrl)
 		sq->ctrl->reset_tbkas = true;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	INIT_DELAYED_WORK(&req->req_work, nvmet_delayed_execute_req);
+#endif
 
 	return true;
 
@@ -1758,6 +1766,12 @@ ssize_t nvmet_ctrl_host_traddr(struct nvmet_ctrl *ctrl,
 }
 
 #if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+static void nvmet_delayed_execute_req(struct work_struct *work) {
+	struct nvmet_req *req =
+		container_of(to_delayed_work(work), struct nvmet_req, req_work);
+	req->execute(req);
+}
+
 void nvmet_execute_request(struct nvmet_req *req) {
 	int ret = xa_insert(&req->sq->outstanding_requests,
 			    req->cmd->common.command_id, req, GFP_KERNEL);
@@ -1766,7 +1780,7 @@ void nvmet_execute_request(struct nvmet_req *req) {
 		       req->cmd->common.command_id);
 		return;
 	}
-	req->execute(req);
+	queue_delayed_work(nvmet_wq, &req->req_work, HZ);
 }
 EXPORT_SYMBOL_GPL(nvmet_execute_request);
 #endif
