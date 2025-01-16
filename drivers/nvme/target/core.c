@@ -1780,7 +1780,11 @@ void nvmet_execute_request(struct nvmet_req *req) {
 		       req->cmd->common.command_id);
 		return;
 	}
-	queue_delayed_work(nvmet_wq, &req->req_work, HZ);
+	if (req->cmd->common.opcode == nvme_cmd_cancel) {
+		req->execute(req);
+	} else {
+		queue_delayed_work(nvmet_wq, &req->req_work, HZ);
+	}
 }
 EXPORT_SYMBOL_GPL(nvmet_execute_request);
 #endif
