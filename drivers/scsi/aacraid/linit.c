@@ -507,6 +507,23 @@ common_config:
 }
 
 /**
+ *	aac_map_queues - Map hardware queues for the SCSI host
+ *	@shost: SCSI host structure
+ *
+ *	Maps the default hardware queue for the given SCSI host to the
+ *	corresponding PCI device and enables mapped queue usage.
+ */
+
+static void aac_map_queues(struct Scsi_Host *shost)
+{
+	struct aac_dev *aac = (struct aac_dev *)shost->hostdata;
+
+	blk_mq_map_hw_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT],
+				&aac->pdev->dev, 0);
+	aac->use_map_queue = true;
+}
+
+/**
  *	aac_change_queue_depth		-	alter queue depths
  *	@sdev:	SCSI device we are considering
  *	@depth:	desired queue depth
@@ -1490,6 +1507,7 @@ static const struct scsi_host_template aac_driver_template = {
 	.bios_param			= aac_biosparm,
 	.shost_groups			= aac_host_groups,
 	.sdev_configure			= aac_sdev_configure,
+	.map_queues			= aac_map_queues,
 	.change_queue_depth		= aac_change_queue_depth,
 	.sdev_groups			= aac_dev_groups,
 	.eh_abort_handler		= aac_eh_abort,
@@ -1777,6 +1795,11 @@ static int aac_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	shost->max_lun = AAC_MAX_LUN;
 
 	pci_set_drvdata(pdev, shost);
+	if (aac_cpu_offline_feature == 1) {
+		shost->nr_hw_queues = aac->max_msix;
+		shost->can_queue    = aac->vector_cap;
+		shost->host_tagset = 1;
+	}
 
 	error = scsi_add_host(shost, &pdev->dev);
 	if (error)
@@ -1908,6 +1931,7 @@ static void aac_remove_one(struct pci_dev *pdev)
 	struct aac_dev *aac = (struct aac_dev *)shost->hostdata;
 
 	aac_cancel_rescan_worker(aac);
+	aac->use_map_queue = false;
 	scsi_remove_host(shost);
 
 	__aac_shutdown(aac);
