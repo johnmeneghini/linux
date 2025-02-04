@@ -810,10 +810,10 @@ void nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
 	struct nvmet_sq *sq = req->sq;
 
-	__nvmet_req_complete(req, status);
 #if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
 	xa_erase(&sq->outstanding_requests, req->cmd->common.command_id);
 #endif
+	__nvmet_req_complete(req, status);
 	percpu_ref_put(&sq->ref);
 }
 EXPORT_SYMBOL_GPL(nvmet_req_complete);
@@ -1783,7 +1783,12 @@ void nvmet_execute_request(struct nvmet_req *req) {
 	if (req->cmd->common.opcode == nvme_cmd_cancel) {
 		req->execute(req);
 	} else {
-		queue_delayed_work(nvmet_wq, &req->req_work, HZ);
+		u32 delay = get_random_u32_below(5 * HZ);
+		if (delay > (4 * HZ)) {
+			queue_delayed_work(nvmet_wq, &req->req_work, delay);
+		} else {
+			req->execute(req);
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(nvmet_execute_request);
