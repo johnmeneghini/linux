@@ -14,6 +14,7 @@ void nvmet_execute_cancel(struct nvmet_req *req)
 	int ret = 0;
 	struct nvmet_ctrl *ctrl = req->sq->ctrl;
 	struct nvmet_sq *sq = req->sq;
+	struct nvmet_req *treq;
 
 	if (!nvmet_check_transfer_len(req, 0))
 		return;
@@ -44,6 +45,22 @@ void nvmet_execute_cancel(struct nvmet_req *req)
 		 */
 		ret = NVME_SC_INVALID_FIELD | NVME_STATUS_DNR;
 	}
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	if (!mult_cmds) {
+		treq = xa_load(&sq->outstanding_requests, cid);
+		if (treq) {
+			if (cancel_delayed_work(&treq->req_work)) {
+				// complete cancel target request
+				nvmet_req_complete(treq, NVME_SC_ABORT_REQ);
+				// complete the cancel command
+				nvmet_set_result(req, 1);
+				nvmet_req_complete(req, ret);
+				return;
+			}
+		}
+	}
+#endif
 
 exit:
 	nvmet_set_result(req, 0);
