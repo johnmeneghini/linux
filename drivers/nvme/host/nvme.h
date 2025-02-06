@@ -411,6 +411,9 @@ struct nvme_ctrl {
 
 	enum nvme_ctrl_type cntrltype;
 	enum nvme_dctype dctype;
+
+	struct delayed_work failover_work;
+	struct list_head failover_list;
 };
 
 static inline enum nvme_ctrl_state nvme_ctrl_state(struct nvme_ctrl *ctrl)
@@ -956,6 +959,9 @@ void nvme_mpath_wait_freeze(struct nvme_subsystem *subsys);
 void nvme_mpath_start_freeze(struct nvme_subsystem *subsys);
 void nvme_mpath_default_iopolicy(struct nvme_subsystem *subsys);
 void nvme_failover_req(struct request *req);
+void nvme_failover_work(struct work_struct *work);
+void nvme_schedule_failover(struct nvme_ctrl *ctrl);
+void nvme_flush_failover(struct nvme_ctrl *ctrl);
 void nvme_kick_requeue_lists(struct nvme_ctrl *ctrl);
 int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl,struct nvme_ns_head *head);
 void nvme_mpath_add_sysfs_link(struct nvme_ns_head *ns);
@@ -1000,6 +1006,15 @@ static inline bool nvme_ctrl_use_ana(struct nvme_ctrl *ctrl)
 	return false;
 }
 static inline void nvme_failover_req(struct request *req)
+{
+}
+static inline void nvme_failover_work(struct work_struct *work)
+{
+}
+static inline void nvme_schedule_failover(struct nvme_ctrl *ctrl)
+{
+}
+static inline void nvme_flush_failover(struct nvme_ctrl *ctrl)
 {
 }
 static inline void nvme_kick_requeue_lists(struct nvme_ctrl *ctrl)

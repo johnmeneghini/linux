@@ -239,6 +239,7 @@ static void nvme_do_delete_ctrl(struct nvme_ctrl *ctrl)
 
 	flush_work(&ctrl->reset_work);
 	nvme_stop_ctrl(ctrl);
+	nvme_flush_failover(ctrl);
 	nvme_remove_namespaces(ctrl);
 	ctrl->ops->delete_ctrl(ctrl);
 	nvme_uninit_ctrl(ctrl);
@@ -1310,6 +1311,19 @@ static void nvme_queue_keep_alive_work(struct nvme_ctrl *ctrl)
 	queue_delayed_work(nvme_wq, &ctrl->ka_work, delay);
 }
 
+void nvme_schedule_failover(struct nvme_ctrl *ctrl)
+{
+	unsigned long delay;
+
+	if (ctrl->cqt)
+		delay = msecs_to_jiffies(ctrl->cqt);
+	else
+		delay = ctrl->kato * HZ;
+
+	queue_delayed_work(nvme_wq, &ctrl->failover_work, delay);
+}
+EXPORT_SYMBOL_GPL(nvme_schedule_failover);
+
 static enum rq_end_io_ret nvme_keep_alive_end_io(struct request *rq,
 						 blk_status_t status)
 {
@@ -1336,6 +1350,8 @@ static enum rq_end_io_ret nvme_keep_alive_end_io(struct request *rq,
 		dev_err(ctrl->device,
 			"failed nvme_keep_alive_end_io error=%d\n",
 				status);
+
+		nvme_schedule_failover(ctrl);
 		return RQ_END_IO_NONE;
 	}
 
@@ -4725,6 +4741,7 @@ EXPORT_SYMBOL_GPL(nvme_remove_io_tag_set);
 
 void nvme_stop_ctrl(struct nvme_ctrl *ctrl)
 {
+	nvme_schedule_failover(ctrl);
 	nvme_mpath_stop(ctrl);
 	nvme_auth_stop(ctrl);
 	nvme_stop_failfast_work(ctrl);
@@ -4851,6 +4868,8 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 
 	INIT_DELAYED_WORK(&ctrl->ka_work, nvme_keep_alive_work);
 	INIT_DELAYED_WORK(&ctrl->failfast_work, nvme_failfast_work);
+	INIT_DELAYED_WORK(&ctrl->failover_work, nvme_failover_work);
+	INIT_LIST_HEAD(&ctrl->failover_list);
 	memset(&ctrl->ka_cmd, 0, sizeof(ctrl->ka_cmd));
 	ctrl->ka_cmd.common.opcode = nvme_admin_keep_alive;
 	ctrl->ka_last_check_time = jiffies;
