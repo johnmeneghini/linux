@@ -733,6 +733,12 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 	/* We support keep-alive timeout in granularity of seconds */
 	id->kas = cpu_to_le16(NVMET_KAS);
 
+	/*
+	 * Command Quiesce Time in milliseconds. If the controller is not
+	 * need any quiencse time, the controller should set it to 1.
+	 */
+	id->cqt = cpu_to_le16(NVMET_CQT);
+
 	id->sqes = (0x6 << 4) | 0x6;
 	id->cqes = (0x4 << 4) | 0x4;
 
