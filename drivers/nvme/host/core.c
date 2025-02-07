@@ -1208,6 +1208,20 @@ u32 nvme_command_effects(struct nvme_ctrl *ctrl, struct nvme_ns *ns, u8 opcode)
 }
 EXPORT_SYMBOL_NS_GPL(nvme_command_effects, "NVME_TARGET_PASSTHRU");
 
+bool nvme_io_command_supported(struct nvme_ctrl *ctrl, u8 opcode)
+{
+	u32 effects = le32_to_cpu(ctrl->effects->iocs[opcode]);
+
+	return effects & NVME_CMD_EFFECTS_CSUPP;
+}
+EXPORT_SYMBOL_GPL(nvme_io_command_supported);
+
+bool nvme_is_cancel(struct nvme_command *cmd)
+{
+	return cmd->common.opcode == nvme_cmd_cancel;
+}
+EXPORT_SYMBOL_GPL(nvme_is_cancel);
+
 u32 nvme_passthru_start(struct nvme_ctrl *ctrl, struct nvme_ns *ns, u8 opcode)
 {
 	u32 effects = nvme_command_effects(ctrl, ns, opcode);
