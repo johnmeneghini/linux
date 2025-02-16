@@ -4193,9 +4193,12 @@ already_gone:
 	return false;
 }
 
-static bool __flush_work(struct work_struct *work, bool from_cancel)
+static bool __flush_work(struct work_struct *work, bool from_cancel, unsigned long *ptimeout)
 {
 	struct wq_barrier barr;
+	unsigned long __timeout = MAX_SCHEDULE_TIMEOUT;
+
+	ptimeout = ptimeout ? : &__timeout;
 
 	if (WARN_ON(!wq_online))
 		return false;
@@ -4239,7 +4242,9 @@ static bool __flush_work(struct work_struct *work, bool from_cancel)
 		}
 	}
 
-	wait_for_completion(&barr.done);
+	*ptimeout = wait_for_completion_timeout(&barr.done, *ptimeout);
+	if (*ptimeout == 0)
+		cancel_work_sync(&barr.work);
 
 out_destroy:
 	destroy_work_on_stack(&barr.work);
@@ -4260,9 +4265,29 @@ out_destroy:
 bool flush_work(struct work_struct *work)
 {
 	might_sleep();
-	return __flush_work(work, false);
+	return __flush_work(work, false, NULL);
 }
 EXPORT_SYMBOL_GPL(flush_work);
+
+/**
+ * flush_work_timeout - wait for a work to finish execution (w/timeout)
+ * @work: the work to flush
+ * @timeout: timeout in jiffies
+ *
+ * Wait for either @work to finish execution or for specified timeout to
+ * expire.
+ *
+ * Return:
+ * 0 if timed out, or positive (at least 1), or number of jiffies left till
+ * timeout) if @work finished execution.
+ */
+unsigned long flush_work_timeout(struct work_struct *work,
+				 unsigned long timeout)
+{
+	__flush_work(work, false, &timeout);
+	return timeout;
+}
+EXPORT_SYMBOL_GPL(flush_work_timeout);
 
 /**
  * flush_delayed_work - wait for a dwork to finish executing the last queueing
@@ -4359,7 +4384,7 @@ static bool __cancel_work_sync(struct work_struct *work, u32 cflags)
 	 * executing. This allows canceling during early boot.
 	 */
 	if (wq_online)
-		__flush_work(work, true);
+		__flush_work(work, true, NULL);
 
 	if (!(cflags & WORK_CANCEL_DISABLE))
 		enable_work(work);
