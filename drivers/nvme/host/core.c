@@ -224,7 +224,7 @@ int nvme_reset_ctrl_sync(struct nvme_ctrl *ctrl)
 
 	ret = nvme_reset_ctrl(ctrl);
 	if (!ret) {
-		flush_work(&ctrl->reset_work);
+		nvme_flush_work(&ctrl->reset_work);
 		if (nvme_ctrl_state(ctrl) != NVME_CTRL_LIVE)
 			ret = -ENETRESET;
 	}
@@ -237,7 +237,7 @@ static void nvme_do_delete_ctrl(struct nvme_ctrl *ctrl)
 	dev_info(ctrl->device,
 		 "Removing ctrl: NQN \"%s\"\n", nvmf_ctrl_subsysnqn(ctrl));
 
-	flush_work(&ctrl->reset_work);
+	nvme_flush_work(&ctrl->reset_work);
 	nvme_stop_ctrl(ctrl);
 	nvme_remove_namespaces(ctrl);
 	ctrl->ops->delete_ctrl(ctrl);
@@ -607,6 +607,13 @@ void nvme_wait_for_held_requests(struct nvme_ctrl *ctrl)
 		;
 }
 EXPORT_SYMBOL_GPL(nvme_wait_for_held_requests);
+
+void nvme_flush_work(struct work_struct *work)
+{
+	while (!flush_work_timeout(work, secs_to_jiffies(1)))
+		;
+}
+EXPORT_SYMBOL_GPL(nvme_flush_work);
 
 bool nvme_change_ctrl_state(struct nvme_ctrl *ctrl,
 		enum nvme_ctrl_state new_state)

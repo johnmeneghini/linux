@@ -798,6 +798,7 @@ void nvme_cancel_tagset(struct nvme_ctrl *ctrl);
 void nvme_cancel_admin_tagset(struct nvme_ctrl *ctrl);
 bool nvme_queue_held_requests_work(struct nvme_ctrl *ctrl);
 void nvme_wait_for_held_requests(struct nvme_ctrl *ctrl);
+void nvme_flush_work(struct work_struct *work);
 bool nvme_change_ctrl_state(struct nvme_ctrl *ctrl,
 		enum nvme_ctrl_state new_state);
 int nvme_disable_ctrl(struct nvme_ctrl *ctrl, bool shutdown);
