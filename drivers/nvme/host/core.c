@@ -3908,13 +3908,15 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 			ctrl->instance, ns->head->instance);
 		disk->flags |= GENHD_FL_HIDDEN;
 	} else {
-#ifdef CONFIG_NVME_MULTIPATH
-		sprintf(disk->disk_name, "nvme%dn%d", ctrl->subsys->instance,
-			ns->head->instance);
-#else
 		sprintf(disk->disk_name, "nvme%dn%d", ctrl->instance,
 			ns->head->instance);
-#endif
+		if ((ctrl->subsys->cmic & NVME_CTRL_CMIC_MULTI_CTRL) && info->is_shared) {
+			dev_warn(ctrl->device,
+				"Found shared namespace %d but multipathing not supported.\n",
+				info->nsid);
+			dev_warn_one(ctrl->device,
+				"Shared namepace support requires CONFIG_NVME_MULTIPATH.\n")
+		}
 	}
 
 	if (nvme_update_ns_info(ns, info))
