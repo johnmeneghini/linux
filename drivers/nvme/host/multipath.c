@@ -627,11 +627,9 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
 	 * We also do this for private namespaces as the namespace sharing flag
 	 * could change after a rescan.
 	 */
-#ifdef CONFIG_NVME_MULTIPATH
 	if (!(ctrl->subsys->cmic & NVME_CTRL_CMIC_MULTI_CTRL) ||
 	    !nvme_is_unique_nsid(ctrl, head))
 		return 0;
-#endif
 
 	blk_set_stacking_limits(&lim);
 	lim.dma_alignment = 3;
@@ -1035,11 +1033,9 @@ int nvme_mpath_init_identify(struct nvme_ctrl *ctrl, struct nvme_id_ctrl *id)
 	size_t ana_log_size;
 	int error = 0;
 
-#ifdef CONFIG_NVME_MULTIPATH
 	/* check if multipath is enabled and we have the capability */
 	if (!ctrl->subsys || !(ctrl->subsys->cmic & NVME_CTRL_CMIC_ANA))
 		return 0;
-#endif
 
 	/* initialize this in the identify path to cover controller resets */
 	atomic_set(&ctrl->nr_active, 0);
