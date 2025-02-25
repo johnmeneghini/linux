@@ -510,26 +510,23 @@ static int aac_src_deliver_message(struct fib *fib)
 			&& dev->sa_firmware)
 			vector_no = aac_get_vector(dev);
 		else {
-			if (aac_cpu_offline_feature == 1) {
-				if (!fib->vector_no || !fib->callback_data) {
-					if (shost && dev->use_map_queue) {
-						qmap = &shost->tag_set.map[HCTX_TYPE_DEFAULT];
-						vector_no = qmap->mq_map[raw_smp_processor_id()];
-					}
-					/*
-					 *	We hardcode the vector_no for
-					 *	reserved commands as a valid shost is
-					 *	absent during the init
-					 */
-					else
-						vector_no = 0;
-				} else {
-					scmd = (struct scsi_cmnd *)fib->callback_data;
-					blk_tag = blk_mq_unique_tag(scsi_cmd_to_rq(scmd));
-					vector_no = blk_mq_unique_tag_to_hwq(blk_tag);
+			if (!fib->vector_no || !fib->callback_data) {
+				if (shost && dev->use_map_queue) {
+					qmap = &shost->tag_set.map[HCTX_TYPE_DEFAULT];
+					vector_no = qmap->mq_map[raw_smp_processor_id()];
 				}
-			} else
-				vector_no = fib->vector_no;
+				/*
+				 *	We hardcode the vector_no for
+				 *	reserved commands as a valid shost is
+				 *	absent during the init
+				 */
+				else
+					vector_no = 0;
+			} else {
+				scmd = (struct scsi_cmnd *)fib->callback_data;
+				blk_tag = blk_mq_unique_tag(scsi_cmd_to_rq(scmd));
+				vector_no = blk_mq_unique_tag_to_hwq(blk_tag);
+			}
 		}
 
 		if (native_hba) {

@@ -2778,5 +2778,4 @@ extern int update_interval;
 extern int check_interval;
 extern int aac_check_reset;
 extern int aac_fib_dump;
-extern int aac_cpu_offline_feature;
 #endif

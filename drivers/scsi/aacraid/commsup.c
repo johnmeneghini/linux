@@ -226,12 +226,9 @@ struct fib *aac_fib_alloc_tag(struct aac_dev *dev, struct scsi_cmnd *scmd)
 	u32 blk_tag;
 	int i;
 
-	if (aac_cpu_offline_feature == 1) {
-		blk_tag = blk_mq_unique_tag(scsi_cmd_to_rq(scmd));
-		i = blk_mq_unique_tag_to_tag(blk_tag);
-		fibptr = &dev->fibs[i];
-	} else
-		fibptr = &dev->fibs[scsi_cmd_to_rq(scmd)->tag];
+	blk_tag = blk_mq_unique_tag(scsi_cmd_to_rq(scmd));
+	i = blk_mq_unique_tag_to_tag(blk_tag);
+	fibptr = &dev->fibs[i];
 
 	/*
 	 *	Null out fields that depend on being zero at the start of
