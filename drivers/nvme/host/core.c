@@ -3935,6 +3935,13 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 	} else {
 		sprintf(disk->disk_name, "nvme%dn%d", ctrl->instance,
 			ns->head->instance);
+#ifndef CONFIG_NVME_MULTIPATH
+		if ((ctrl->subsys->cmic & NVME_CTRL_CMIC_MULTI_CTRL) && info->is_shared) {
+			dev_warn(ctrl->device,
+				"Shared namespace %d found but multipathing not supported.\n",
+				info->nsid);
+		}
+#endif
 	}
 
 	if (nvme_update_ns_info(ns, info))
