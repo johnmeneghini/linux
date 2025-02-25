@@ -10,9 +10,11 @@
 #include "nvme.h"
 
 bool multipath = true;
+#ifdef CONFIG_NVME_DISABLE_MULTIPATH_PARAM
 module_param(multipath, bool, 0444);
 MODULE_PARM_DESC(multipath,
 	"turn on native support for multiple controllers per subsystem");
+#endif
 
 static const char *nvme_iopolicy_names[] = {
 	[NVME_IOPOLICY_NUMA]	= "numa",

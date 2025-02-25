@@ -28,6 +28,17 @@ config NVME_MULTIPATH
 
 	  If unsure, say Y.
 
+config NVME_DISABLE_MULTIPATH_PARAM
+	bool "NVMe disable multipath param"
+	depends on NVME_CORE && NVME_MULTIPATH
+	default n
+	help
+	  This option disables the core_nvme.multipath parameter.
+	  If this option is enabled the core_nvme.multipath parameter
+	  is excluded from the kernel.
+
+	  If unsure, say N.
+
 config NVME_VERBOSE_ERRORS
 	bool "NVMe verbose error reporting"
 	depends on NVME_CORE
