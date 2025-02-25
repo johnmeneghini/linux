@@ -3824,7 +3824,12 @@ static int nvme_init_ns_head(struct nvme_ns *ns, struct nvme_ns_info *info)
 				"Found shared namespace %d, but multipathing not supported.\n",
 				info->nsid);
 			dev_warn_once(ctrl->device,
-				"Support for shared namespaces without CONFIG_NVME_MULTIPATH is deprecated and will be removed in Linux 6.0.\n");
+#if IS_ENABLED(CONFIG_NVME_MULTIPATH_PARAM)
+				"Shared namespace support requires core_nvme.multipath=Y.\n");
+
+#else
+				"Shared namespace support requires CONFIG_NVME_MULTIPATH.\n");
+#endif
 		}
 	}
 
