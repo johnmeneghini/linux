@@ -18,10 +18,14 @@ config NVME_MULTIPATH
 	bool "NVMe multipath support"
 	depends on NVME_CORE
 	help
-	   This option enables support for multipath access to NVMe
-	   subsystems.  If this option is enabled only a single
-	   /dev/nvmeXnY device will show up for each NVMe namespace,
-	   even if it is accessible through multiple controllers.
+	   This option controls support for multipath access to NVMe
+	   subsystems. If this option is enabled support for ANA multipath is
+	   enabled. If this option is disabled support for ANA multipath is
+	   disabled and each controller/namespace receives it's own /dev/nvmeXnY
+	   device, even when the namespace is accessible through multiple
+	   controllers.
+
+	   If unsure, say Y.
 
 config NVME_ANA
 	bool "NVMe ANA support"
