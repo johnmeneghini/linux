@@ -86,9 +86,11 @@ void nvme_mpath_start_freeze(struct nvme_subsystem *subsys)
 void nvme_failover_req(struct request *req)
 {
 	struct nvme_ns *ns = req->q->queuedata;
+	struct nvme_ctrl *ctrl = nvme_req(req)->ctrl;
 	u16 status = nvme_req(req)->status & NVME_SCT_SC_MASK;
 	unsigned long flags;
 	struct bio *bio;
+	enum nvme_ctrl_state state = nvme_ctrl_state(ctrl);
 
 	nvme_mpath_clear_current_path(ns);
 
@@ -121,9 +123,53 @@ void nvme_failover_req(struct request *req)
 	blk_steal_bios(&ns->head->requeue_list, req);
 	spin_unlock_irqrestore(&ns->head->requeue_lock, flags);
 
-	nvme_req(req)->status = 0;
-	nvme_end_req(req);
-	kblockd_schedule_work(&ns->head->requeue_work);
+	spin_lock_irqsave(&ctrl->lock, flags);
+	list_add_tail(&req->queuelist, &ctrl->failover_list);
+	spin_unlock_irqrestore(&ctrl->lock, flags);
+
+	if (state == NVME_CTRL_DELETING) {
+		/*
+		 * request which fail over in the DELETING state were
+		 * canceled and blk_mq_tagset_wait_completed_request will
+		 * block until they have been proceed. Though
+		 * nvme_failover_work is already stopped. Thus schedule
+		 * a failover; it's still necessary to delay these commands
+		 * by CQT.
+		 */
+		nvme_schedule_failover(ctrl);
+	}
+}
+
+void nvme_flush_failover(struct nvme_ctrl *ctrl)
+{
+	LIST_HEAD(failover_list);
+	struct request *rq;
+	bool kick = false;
+
+	spin_lock_irq(&ctrl->lock);
+	list_splice_init(&ctrl->failover_list, &failover_list);
+	spin_unlock_irq(&ctrl->lock);
+
+	while (!list_empty(&failover_list)) {
+		rq = list_entry(failover_list.next,
+				struct request, queuelist);
+		list_del_init(&rq->queuelist);
+
+		nvme_req(rq)->status = 0;
+		nvme_end_req(rq);
+		kick = true;
+	}
+
+	if (kick)
+		nvme_kick_requeue_lists(ctrl);
+}
+
+void nvme_failover_work(struct work_struct *work)
+{
+	struct nvme_ctrl *ctrl = container_of(to_delayed_work(work),
+					struct nvme_ctrl, failover_work);
+
+	nvme_flush_failover(ctrl);
 }
 
 void nvme_mpath_start_request(struct request *rq)

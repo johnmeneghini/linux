@@ -679,6 +679,7 @@ bool nvmet_subsys_nsid_exists(struct nvmet_subsys *subsys, u32 nsid);
 
 #define NVMET_KAS		10
 #define NVMET_DISC_KATO_MS		120000
+#define NVMET_CQT		1
 
 int __init nvmet_init_configfs(void);
 void __exit nvmet_exit_configfs(void);

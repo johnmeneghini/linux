@@ -2393,6 +2393,7 @@ static void nvme_tcp_error_recovery_work(struct work_struct *work)
 		nvme_auth_revoke_tls_key(ctrl);
 	nvme_stop_keep_alive(ctrl);
 	flush_work(&ctrl->async_event_work);
+	nvme_schedule_failover(ctrl);
 	nvme_tcp_teardown_io_queues(ctrl, false);
 	/* unquiesce to fail fast pending requests */
 	nvme_unquiesce_io_queues(ctrl);
