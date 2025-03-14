@@ -7,6 +7,7 @@
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/rculist.h>
+#include <linux/workqueue.h>
 #include <linux/pci-p2pdma.h>
 #include <linux/scatterlist.h>
 
@@ -26,6 +27,10 @@ static DEFINE_IDA(cntlid_ida);
 
 struct workqueue_struct *nvmet_wq;
 EXPORT_SYMBOL_GPL(nvmet_wq);
+
+bool emulate_cancel_support;
+module_param(emulate_cancel_support, bool, 0644);
+MODULE_PARM_DESC(emulate_cancel_support, "Emulate the cancel command support. Default = false");
 
 /*
  * This read/write semaphore is used to synchronize access to configuration
@@ -807,6 +812,9 @@ void nvmet_req_complete(struct nvmet_req *req, u16 status)
 {
 	struct nvmet_sq *sq = req->sq;
 
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	xa_erase(&sq->outstanding_requests, req->cmd->common.command_id);
+#endif
 	__nvmet_req_complete(req, status);
 	percpu_ref_put(&sq->ref);
 }
@@ -978,7 +986,9 @@ int nvmet_sq_init(struct nvmet_sq *sq)
 	init_completion(&sq->free_done);
 	init_completion(&sq->confirm_done);
 	nvmet_auth_sq_init(sq);
-
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	xa_init(&sq->outstanding_requests);
+#endif
 	return 0;
 }
 EXPORT_SYMBOL_GPL(nvmet_sq_init);
@@ -1057,6 +1067,13 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 	if (nvmet_is_passthru_req(req))
 		return nvmet_parse_passthru_io_cmd(req);
 
+	if (emulate_cancel_support &&
+	    req->cmd->common.opcode == nvme_cmd_cancel) {
+		req->execute = nvmet_execute_cancel;
+		if (req->cmd->cancel.nsid == NVME_NSID_ALL)
+			return 0;
+	}
+
 	ret = nvmet_req_find_ns(req);
 	if (unlikely(ret))
 		return ret;
@@ -1106,6 +1123,10 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 	}
 	return ret;
 }
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+static void nvmet_delayed_execute_req(struct work_struct *work);
+#endif
 
 bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 		struct nvmet_sq *sq, const struct nvmet_fabrics_ops *ops)
@@ -1171,6 +1192,9 @@ bool nvmet_req_init(struct nvmet_req *req, struct nvmet_cq *cq,
 
 	if (sq->ctrl)
 		sq->ctrl->reset_tbkas = true;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	INIT_DELAYED_WORK(&req->req_work, nvmet_delayed_execute_req);
+#endif
 
 	return true;
 
@@ -1743,6 +1767,35 @@ ssize_t nvmet_ctrl_host_traddr(struct nvmet_ctrl *ctrl,
 		return -EOPNOTSUPP;
 	return ctrl->ops->host_traddr(ctrl, traddr, traddr_len);
 }
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+static void nvmet_delayed_execute_req(struct work_struct *work) {
+	struct nvmet_req *req =
+		container_of(to_delayed_work(work), struct nvmet_req, req_work);
+	req->execute(req);
+}
+
+void nvmet_execute_request(struct nvmet_req *req) {
+	int ret = xa_insert(&req->sq->outstanding_requests,
+			    req->cmd->common.command_id, req, GFP_KERNEL);
+	if (ret) {
+		pr_err("nvmet failure to insert command %d",
+		       req->cmd->common.command_id);
+		return;
+	}
+	if (req->cmd->common.opcode == nvme_cmd_cancel) {
+		req->execute(req);
+	} else {
+		u32 delay = get_random_u32_below(5 * HZ);
+		if (delay > (4 * HZ)) {
+			queue_delayed_work(nvmet_wq, &req->req_work, delay);
+		} else {
+			req->execute(req);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(nvmet_execute_request);
+#endif
 
 static struct nvmet_subsys *nvmet_find_get_subsys(struct nvmet_port *port,
 		const char *subsysnqn)

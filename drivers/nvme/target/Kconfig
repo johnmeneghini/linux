@@ -125,4 +125,11 @@ config NVME_TARGET_PCI_EPF
 	  which allows creating a NVMe PCI controller using an endpoint mode
 	  capable PCI controller.
 
+config NVME_TARGET_TRACK_COMMANDS
+	bool "NVMe over Fabrics command tracking"
+	depends on NVME_TARGET
+	help
+	  This enabled tracking of outstanding commands in the target, which
+	  allows things like support for the cancel command
+
 	  If unsure, say N.

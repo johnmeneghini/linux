@@ -40,6 +40,8 @@
 #define nvmet_for_each_enabled_ns(xa, index, entry) \
 	xa_for_each_marked(xa, index, entry, NVMET_NS_ENABLED)
 
+extern bool emulate_cancel_support;
+
 /*
  * Supported optional AENs:
  */
@@ -170,6 +172,9 @@ struct nvmet_sq {
 #endif
 	struct completion	free_done;
 	struct completion	confirm_done;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	struct xarray		outstanding_requests;
+#endif
 };
 
 struct nvmet_ana_group {
@@ -490,6 +495,9 @@ struct nvmet_req {
 	u16			error_loc;
 	u64			error_slba;
 	struct nvmet_pr_per_ctrl_ref *pc_ref;
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+	struct delayed_work req_work;
+#endif
 };
 
 #define NVMET_MAX_MPOOL_BVEC		16
@@ -713,6 +721,8 @@ void nvmet_execute_identify_ns_zns(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_recv(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_send(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_append(struct nvmet_req *req);
+
+void nvmet_execute_cancel(struct nvmet_req *req);
 
 static inline u32 nvmet_rw_data_len(struct nvmet_req *req)
 {
@@ -963,4 +973,9 @@ struct nvmet_feat_arbitration {
 	u8		ab;
 };
 
+#if IS_ENABLED(CONFIG_NVME_TARGET_TRACK_COMMANDS)
+void nvmet_execute_request(struct nvmet_req *req);
+#else
+static inline void nvmet_execute_request(struct nvmet_req *req) { req->execute(req); }
+#endif
 #endif /* _NVMET_H */
