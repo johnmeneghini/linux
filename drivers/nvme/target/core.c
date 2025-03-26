@@ -1780,7 +1780,8 @@ void nvmet_execute_request(struct nvmet_req *req) {
 	u32 delay_msec;
 	unsigned long flags;
 
-	if (unlikely(req->sq->qid == 0))
+	if (unlikely(req->sq->qid == 0) ||
+			req->cmd->common.opcode == nvme_cmd_cancel)
 		return req->execute(req);
 
 	if (ctrl) {
