@@ -4101,17 +4101,31 @@ static void nvme_ns_add_to_ctrl_list(struct nvme_ns *ns)
 	list_add_rcu(&ns->list, &ns->ctrl->namespaces);
 }
 
-static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
+/**
+ * struct async_scan_task - keeps track of controller & NSID to scan
+ * @entry               link to the completion chain list
+ * @ctrl:		Controller on which namespaces are being scanned
+ * @nsid:		The NSID to scan
+ */
+struct async_scan_task {
+	struct compl_chain_entry entry;
+	struct nvme_ctrl *ctrl;
+	u32 nsid;
+};
+
+static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info,
+				struct async_scan_task *task)
 {
 	struct queue_limits lim = { };
 	struct nvme_ns *ns;
 	struct gendisk *disk;
 	int node = ctrl->numa_node;
 	bool last_path = false;
+	int r;
 
 	ns = kzalloc_node(sizeof(*ns), GFP_KERNEL, node);
 	if (!ns)
-		return;
+		goto out_complete_async;
 
 	if (ctrl->opts && ctrl->opts->data_digest)
 		lim.features |= BLK_FEAT_STABLE_WRITES;
@@ -4130,7 +4144,21 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 	ns->ctrl = ctrl;
 	kref_init(&ns->kref);
 
-	if (nvme_init_ns_head(ns, info))
+	/*
+	 * Wait for the previous async task to finish before
+	 * allocating the namespace.
+	 */
+
+	if (task) {
+		compl_chain_wait(&task->entry);
+		r = nvme_init_ns_head(ns, info);
+		compl_chain_complete(&task->entry);
+		task = NULL;
+	} else {
+		r = nvme_init_ns_head(ns, info);
+	}
+
+	if (r)
 		goto out_cleanup_disk;
 
 	/*
@@ -4221,6 +4249,9 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 	put_disk(disk);
  out_free_ns:
 	kfree(ns);
+ out_complete_async:
+	if (task)
+		compl_chain_complete(&task->entry);
 }
 
 static void nvme_ns_remove(struct nvme_ns *ns)
@@ -4305,19 +4336,20 @@ out:
 		nvme_ns_remove(ns);
 }
 
-static void nvme_scan_ns(struct nvme_ctrl *ctrl, unsigned nsid)
+static void nvme_scan_ns(struct nvme_ctrl *ctrl, unsigned nsid,
+				struct async_scan_task *task)
 {
 	struct nvme_ns_info info = { .nsid = nsid };
 	struct nvme_ns *ns;
 	int ret = 1;
 
 	if (nvme_identify_ns_descs(ctrl, &info))
-		return;
+		goto exit;
 
 	if (info.ids.csi != NVME_CSI_NVM && !nvme_multi_css(ctrl)) {
 		dev_warn(ctrl->device,
 			"command set not reported for nsid: %d\n", nsid);
-		return;
+		goto exit;
 	}
 
 	/*
@@ -4340,44 +4372,31 @@ static void nvme_scan_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 	 * becomes ready and restart the scan.
 	 */
 	if (ret || !info.is_ready)
-		return;
+		goto exit;
 
 	ns = nvme_find_get_ns(ctrl, nsid);
 	if (ns) {
+		if (task)
+			compl_chain_complete(&task->entry);
 		nvme_validate_ns(ns, &info);
 		nvme_put_ns(ns);
 	} else {
-		nvme_alloc_ns(ctrl, &info);
+		nvme_alloc_ns(ctrl, &info, task);
 	}
-}
 
-/**
- * struct async_scan_info - keeps track of controller & NSIDs to scan
- * @ctrl:	Controller on which namespaces are being scanned
- * @next_nsid:	Index of next NSID to scan in ns_list
- * @ns_list:	Pointer to list of NSIDs to scan
- *
- * Note: There is a single async_scan_info structure shared by all instances
- * of nvme_scan_ns_async() scanning a given controller, so the atomic
- * operations on next_nsid are critical to ensure each instance scans a unique
- * NSID.
- */
-struct async_scan_info {
-	struct nvme_ctrl *ctrl;
-	atomic_t next_nsid;
-	__le32 *ns_list;
-};
+	return;
+
+exit:
+	if (task)
+		compl_chain_complete(&task->entry);
+}
 
 static void nvme_scan_ns_async(void *data, async_cookie_t cookie)
 {
-	struct async_scan_info *scan_info = data;
-	int idx;
-	u32 nsid;
+	struct async_scan_task *task = data;
 
-	idx = (u32)atomic_fetch_inc(&scan_info->next_nsid);
-	nsid = le32_to_cpu(scan_info->ns_list[idx]);
-
-	nvme_scan_ns(scan_info->ctrl, nsid);
+	nvme_scan_ns(task->ctrl, task->nsid, task);
+	kfree(task);
 }
 
 static void nvme_remove_invalid_namespaces(struct nvme_ctrl *ctrl,
@@ -4407,14 +4426,12 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl)
 	u32 prev = 0;
 	int ret = 0, i;
 	ASYNC_DOMAIN(domain);
-	struct async_scan_info scan_info;
+	struct async_scan_task *task;
 
 	ns_list = kzalloc(NVME_IDENTIFY_DATA_SIZE, GFP_KERNEL);
 	if (!ns_list)
 		return -ENOMEM;
 
-	scan_info.ctrl = ctrl;
-	scan_info.ns_list = ns_list;
 	for (;;) {
 		struct nvme_command cmd = {
 			.identify.opcode	= nvme_admin_identify,
@@ -4430,20 +4447,30 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl)
 			goto free;
 		}
 
-		atomic_set(&scan_info.next_nsid, 0);
 		for (i = 0; i < nr_entries; i++) {
 			u32 nsid = le32_to_cpu(ns_list[i]);
 
 			if (!nsid)	/* end of the list? */
 				goto out;
-			async_schedule_domain(nvme_scan_ns_async, &scan_info,
+
+			task = kmalloc(sizeof(*task), GFP_KERNEL);
+			if (!task) {
+				ret = -ENOMEM;
+				goto out;
+			}
+
+			task->nsid = nsid;
+			task->ctrl = ctrl;
+			compl_chain_add(&ctrl->scan_chain, &task->entry);
+
+			async_schedule_domain(nvme_scan_ns_async, task,
 						&domain);
 			while (++prev < nsid)
 				nvme_ns_remove_by_nsid(ctrl, prev);
 		}
-		async_synchronize_full_domain(&domain);
 	}
  out:
+	async_synchronize_full_domain(&domain);
 	nvme_remove_invalid_namespaces(ctrl, prev);
  free:
 	async_synchronize_full_domain(&domain);
@@ -4462,7 +4489,7 @@ static void nvme_scan_ns_sequential(struct nvme_ctrl *ctrl)
 	kfree(id);
 
 	for (i = 1; i <= nn; i++)
-		nvme_scan_ns(ctrl, i);
+		nvme_scan_ns(ctrl, i, NULL);
 
 	nvme_remove_invalid_namespaces(ctrl, nn);
 }
@@ -5083,6 +5110,7 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 
 	mutex_init(&ctrl->scan_lock);
 	INIT_LIST_HEAD(&ctrl->namespaces);
+	compl_chain_init(&ctrl->scan_chain);
 	xa_init(&ctrl->cels);
 	ctrl->dev = dev;
 	ctrl->ops = ops;
