@@ -23,6 +23,7 @@
 #include <linux/pm_qos.h>
 #include <linux/ratelimit.h>
 #include <linux/unaligned.h>
+#include <linux/ktime.h>
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -4168,6 +4169,8 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl)
 	int ret = 0, i;
 	ASYNC_DOMAIN(domain);
 	struct async_scan_info scan_info;
+	ktime_t start, end;
+	s64 elapsed_ms;
 
 	ns_list = kzalloc(NVME_IDENTIFY_DATA_SIZE, GFP_KERNEL);
 	if (!ns_list)
@@ -4175,6 +4178,7 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl)
 
 	scan_info.ctrl = ctrl;
 	scan_info.ns_list = ns_list;
+	start = ktime_get();
 	for (;;) {
 		struct nvme_command cmd = {
 			.identify.opcode	= nvme_admin_identify,
@@ -4208,6 +4212,9 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl)
  free:
 	async_synchronize_full_domain(&domain);
 	kfree(ns_list);
+	end = ktime_get();
+	elapsed_ms = ktime_to_ms(ktime_sub(end, start));
+	dev_info(ctrl->device,"namespace scan time: %lld ms\n", elapsed_ms);
 	return ret;
 }
 
