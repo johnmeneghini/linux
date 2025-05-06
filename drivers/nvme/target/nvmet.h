@@ -170,6 +170,9 @@ struct nvmet_sq {
 #endif
 	struct completion	free_done;
 	struct completion	confirm_done;
+#if IS_ENABLED(CONFIG_NVME_TARGET_DELAY_REQUESTS)
+	struct xarray		outstanding_requests;
+#endif
 };
 
 struct nvmet_ana_group {
@@ -304,6 +307,10 @@ struct nvmet_ctrl {
 #endif
 #ifdef CONFIG_NVME_TARGET_TCP_TLS
 	struct key		*tls_key;
+#endif
+#ifdef CONFIG_NVME_TARGET_DELAY_REQUESTS
+	atomic_t		delay_count;
+	u32			delay_msec;
 #endif
 	struct nvmet_pr_log_mgr pr_log_mgr;
 };
@@ -490,6 +497,9 @@ struct nvmet_req {
 	u16			error_loc;
 	u64			error_slba;
 	struct nvmet_pr_per_ctrl_ref *pc_ref;
+#if IS_ENABLED(CONFIG_NVME_TARGET_DELAY_REQUESTS)
+	struct delayed_work	req_work;
+#endif
 };
 
 #define NVMET_MAX_MPOOL_BVEC		16
@@ -564,6 +574,7 @@ size_t nvmet_req_transfer_len(struct nvmet_req *req);
 bool nvmet_check_transfer_len(struct nvmet_req *req, size_t len);
 bool nvmet_check_data_len_lte(struct nvmet_req *req, size_t data_len);
 void nvmet_req_complete(struct nvmet_req *req, u16 status);
+void nvmet_req_complete_delayed(struct nvmet_req *req, u16 status);
 int nvmet_req_alloc_sgls(struct nvmet_req *req);
 void nvmet_req_free_sgls(struct nvmet_req *req);
 
@@ -712,6 +723,8 @@ void nvmet_execute_identify_ns_zns(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_recv(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_mgmt_send(struct nvmet_req *req);
 void nvmet_bdev_execute_zone_append(struct nvmet_req *req);
+
+void nvmet_execute_cancel(struct nvmet_req *req);
 
 static inline u32 nvmet_rw_data_len(struct nvmet_req *req)
 {
@@ -961,5 +974,11 @@ struct nvmet_feat_arbitration {
 	u8		lpw;
 	u8		ab;
 };
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_DELAY_REQUESTS)
+void nvmet_execute_request(struct nvmet_req *req);
+#else
+static inline void nvmet_execute_request(struct nvmet_req *req) { req->execute(req); }
+#endif
 
 #endif /* _NVMET_H */
