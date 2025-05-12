@@ -223,8 +223,24 @@ int aac_fib_setup(struct aac_dev * dev)
 struct fib *aac_fib_alloc_tag(struct aac_dev *dev, struct scsi_cmnd *scmd)
 {
 	struct fib *fibptr;
+#ifdef CONFIG_SCSI_AACRAID_MULTIQ
+	u32 blk_tag;
+	int i;
 
+	blk_tag = blk_mq_unique_tag(scsi_cmd_to_rq(scmd));
+	i = blk_mq_unique_tag_to_tag(blk_tag);
+
+	 /* Ensure the tag is within the range reserved for regular commands */
+	if (i >= dev->scsi_host_ptr->can_queue) {
+		pr_err("aacraid: Invalid FIB tag (%d) for regular command. Max allowed = %u\n",
+			i, dev->scsi_host_ptr->can_queue - 1);
+		return NULL;
+	}
+	fibptr = &dev->fibs[i];
+#else
 	fibptr = &dev->fibs[scsi_cmd_to_rq(scmd)->tag];
+#endif
+
 	/*
 	 *	Null out fields that depend on being zero at the start of
 	 *	each I/O
@@ -250,14 +266,23 @@ struct fib *aac_fib_alloc(struct aac_dev *dev)
 {
 	struct fib * fibptr;
 	unsigned long flags;
+
 	spin_lock_irqsave(&dev->fib_lock, flags);
-	fibptr = dev->free_fib;
-	if(!fibptr){
-		spin_unlock_irqrestore(&dev->fib_lock, flags);
-		return fibptr;
+	/* Search only within the management FIB range */
+	fibptr = NULL;
+	for (int i = dev->scsi_host_ptr->can_queue;
+		i < dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB; i++) {
+		if (&dev->fibs[i] == dev->free_fib || dev->fibs[i].next != NULL) {
+			fibptr = &dev->fibs[i];
+			dev->free_fib = fibptr->next;
+			break;
+		}
 	}
-	dev->free_fib = fibptr->next;
 	spin_unlock_irqrestore(&dev->fib_lock, flags);
+
+	if (!fibptr)
+		return NULL;
+
 	/*
 	 *	Set the proper node type code and node byte size
 	 */
