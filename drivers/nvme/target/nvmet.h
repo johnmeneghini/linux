@@ -893,6 +893,8 @@ u32 nvmet_auth_receive_data_len(struct nvmet_req *req);
 void nvmet_execute_auth_receive(struct nvmet_req *req);
 int nvmet_auth_set_key(struct nvmet_host *host, const char *secret,
 		       bool set_ctrl);
+struct key *nvme_auth_extract_key(struct key *keyring, const u8 *secret,
+				  size_t secret_len, bool *generated);
 int nvmet_auth_set_host_hash(struct nvmet_host *host, const char *hash);
 u8 nvmet_setup_auth(struct nvmet_ctrl *ctrl, struct nvmet_sq *sq);
 void nvmet_auth_sq_init(struct nvmet_sq *sq);
@@ -935,6 +937,13 @@ static inline bool nvmet_has_auth(struct nvmet_ctrl *ctrl,
 }
 static inline const char *nvmet_dhchap_dhgroup_name(u8 dhgid) { return NULL; }
 static inline void nvmet_auth_insert_psk(struct nvmet_sq *sq) {};
+static inline struct key *nvme_auth_extract_key(struct key *keyring,
+						const u8 *secret,
+						size_t secret_len,
+						bool *generated)
+{
+	return ERR_PTR(-ENOKEY);
+}
 #endif
 
 int nvmet_pr_init_ns(struct nvmet_ns *ns);
