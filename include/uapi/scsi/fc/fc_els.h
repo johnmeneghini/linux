@@ -1193,7 +1193,7 @@ union fc_tlv_desc {
  */
 static inline union fc_tlv_desc *fc_tlv_next_desc(union fc_tlv_desc *desc)
 {
-	return (union fc_tlv_desc *)((u8 *)desc + FC_TLV_DESC_SZ_FROM_LENGTH(desc));
+	return (union fc_tlv_desc *)((__u8 *)desc + FC_TLV_DESC_SZ_FROM_LENGTH(desc));
 }
 
 
