@@ -35,6 +35,10 @@ static const struct kernel_param_ops multipath_param_ops = {
 	.get = param_get_bool,
 };
 
+static bool force_ao = false;
+module_param(force_ao, bool, 0644);
+MODULE_PARM_DESC(force_ao, "force active non-optimized paths to be active optimized");
+
 module_param_cb(multipath, &multipath_param_ops, &multipath, 0444);
 MODULE_PARM_DESC(multipath,
 	"turn on native support for multiple controllers per subsystem");
@@ -869,7 +873,7 @@ static void nvme_update_ns_ana_state(struct nvme_ana_group_desc *desc,
 		struct nvme_ns *ns)
 {
 	ns->ana_grpid = le32_to_cpu(desc->grpid);
-	ns->ana_state = desc->state;
+	ns->ana_state = (force_ao) ? NVME_ANA_OPTIMIZED : desc->state;
 	clear_bit(NVME_NS_ANA_PENDING, &ns->flags);
 	/*
 	 * nvme_mpath_set_live() will trigger I/O to the multipath path device
