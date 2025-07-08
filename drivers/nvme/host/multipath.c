@@ -12,8 +12,6 @@
 bool multipath = true;
 static bool multipath_always_on;
 
-static struct nvme_ns *nvme_numa_path(struct nvme_ns_head *);
-
 static int multipath_param_set(const char *val, const struct kernel_param *kp)
 {
 	int ret;
@@ -454,7 +452,7 @@ static struct nvme_ns *nvme_queue_depth_path(struct nvme_ns_head *head)
 
 	best_opt = (best_opt) ? best_opt : best_nonopt;
 
-	return best_opt ? best_opt : nvme_numa_path(head);
+	return best_opt ? best_opt : __nvme_find_path(head, numa_node_id());
 }
 
 static inline bool nvme_path_is_optimized(struct nvme_ns *ns)
