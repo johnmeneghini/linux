@@ -1215,9 +1215,9 @@ qla27xx_copy_fpin_pkt(struct scsi_qla_host *vha, void **pkt,
 			no_bytes = (pending_bytes > sizeof(new_pkt->data)) ?
 			    sizeof(new_pkt->data) : pending_bytes;
 			if ((buffer_copy_offset + no_bytes) <= total_bytes) {
-				memcpy(((uint8_t *)fpin_pkt +
-				    buffer_copy_offset), (uint8_t *) &new_pkt->data[0],
-				    no_bytes);
+				uint8_t *ptr1 = ((uint8_t *)fpin_pkt + buffer_copy_offset);
+				uint8_t *ptr2 = ((uint8_t *) &new_pkt->data[0]);
+				memcpy(ptr1, ptr2, no_bytes);
 				buffer_copy_offset += no_bytes;
 				pending_bytes -= no_bytes;
 				--entry_count_remaining;
@@ -1225,9 +1225,9 @@ qla27xx_copy_fpin_pkt(struct scsi_qla_host *vha, void **pkt,
 				ql_log(ql_log_warn, vha, 0x5044,
 				       "Attempt to copy more that we got, optimizing..%x\n",
 				       buffer_copy_offset);
-				memcpy(((uint8_t *)fpin_pkt +
-				    buffer_copy_offset), (uint8_t *) &new_pkt->data[0],
-				    total_bytes - buffer_copy_offset);
+				uint8_t *ptr1 = ((uint8_t *)fpin_pkt + buffer_copy_offset);
+				uint8_t *ptr2 = ((uint8_t *) &new_pkt->data[0]);
+				memcpy(ptr1, ptr2, (total_bytes - buffer_copy_offset));
 			}
 
 			((response_t *)new_pkt)->signature = RESPONSE_PROCESSED;
