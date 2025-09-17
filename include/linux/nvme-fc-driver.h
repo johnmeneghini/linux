@@ -540,6 +540,8 @@ void nvme_fc_fpin_rcv(struct nvme_fc_local_port *localport,
 		      u32 fpin_len, char *fpin_buf);
 
 struct nvme_fc_lport;
+struct nvme_fc_lport *nvme_fc_lport_from_wwpn(u64 wwpn);
+void nvme_fc_lport_put(struct nvme_fc_lport *lport);
 void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
 
 /*

@@ -25,6 +25,13 @@
 #include <uapi/scsi/fc/fc_els.h>
 #include "scsi_priv.h"
 
+#if (IS_ENABLED(CONFIG_NVME_FC))
+struct nvme_fc_lport;
+struct nvme_fc_lport *nvme_fc_lport_from_wwpn(u64 wwpn);
+void nvme_fc_lport_put(struct nvme_fc_lport *lport);
+void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
+#endif
+
 static int fc_queue_work(struct Scsi_Host *, struct work_struct *);
 static void fc_vport_sched_delete(struct work_struct *work);
 static int fc_vport_setup(struct Scsi_Host *shost, int channel,
@@ -1236,9 +1243,22 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Online
 		 * Allow only Online->Marginal
 		 */
-		if (rport->port_state == FC_PORTSTATE_ONLINE)
+		if (rport->port_state == FC_PORTSTATE_ONLINE) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			{
+				struct Scsi_Host *shost = rport_to_shost(rport);
+				struct nvme_fc_lport *lport;
+				u64 local_wwpn = fc_host_port_name(shost);
+				
+				lport = nvme_fc_lport_from_wwpn(local_wwpn);
+				if (lport) {
+					nvme_fc_fpin_set_state(lport, rport->port_name, true);
+					nvme_fc_lport_put(lport);
+				}
+			}
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else if (port_state == FC_PORTSTATE_ONLINE) {
 		/*
@@ -1246,9 +1266,22 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Marginal
 		 * Allow only Marginal->Online
 		 */
-		if (rport->port_state == FC_PORTSTATE_MARGINAL)
+		if (rport->port_state == FC_PORTSTATE_MARGINAL) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			{
+				struct Scsi_Host *shost = rport_to_shost(rport);
+				struct nvme_fc_lport *lport;
+				u64 local_wwpn = fc_host_port_name(shost);
+				
+				lport = nvme_fc_lport_from_wwpn(local_wwpn);
+				if (lport) {
+					nvme_fc_fpin_set_state(lport, rport->port_name, false);
+					nvme_fc_lport_put(lport);
+				}
+			}
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else
 		return -EINVAL;
