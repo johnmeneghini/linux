@@ -23,8 +23,14 @@
 #include <scsi/scsi_netlink_fc.h>
 #include <scsi/scsi_bsg_fc.h>
 #include <uapi/scsi/fc/fc_els.h>
-#include <linux/nvme-fc-driver.h>
 #include "scsi_priv.h"
+
+#if (IS_ENABLED(CONFIG_NVME_FC))
+struct nvme_fc_lport;
+struct nvme_fc_lport *nvme_fc_lport_from_wwpn(u64 wwpn);
+void nvme_fc_lport_put(struct nvme_fc_lport *lport);
+void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
+#endif
 
 static int fc_queue_work(struct Scsi_Host *, struct work_struct *);
 static void fc_vport_sched_delete(struct work_struct *work);
