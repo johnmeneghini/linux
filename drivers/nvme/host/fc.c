@@ -259,7 +259,7 @@ nvme_fc_free_lport(struct kref *ref)
 	kfree(lport);
 }
 
-static void
+void
 nvme_fc_lport_put(struct nvme_fc_lport *lport)
 {
 	kref_put(&lport->ref, nvme_fc_free_lport);
