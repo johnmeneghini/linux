@@ -1,7 +1,7 @@
 # Call Graph for nvme_fc_fpin_rcv Function
 
 ## Overview
-`nvme_fc_fpin_rcv` is a function in the NVMe-FC host subsystem that processes FPIN (Fabric Performance Impact Notification) messages received from Fibre Channel switches/fabrics. FPINs are used to notify hosts about fabric performance degradation or link issues that could affect I/O performance.
+`nvme_fc_fpin_rcv` is a function in the NVMe-FC host subsystem that processes FPIN (Fabric Performance Impact Notification) messages received from Fibre Channel switches/fabrics. FPINs are used to notify hosts about fabric performance degradation or link issues that could affect I/O performance. **Enhanced with refactored helper functions and cross-layer integration capabilities.**
 
 **Location**: `drivers/nvme/host/fc.c:3789`  
 **Export**: Exported symbol available to FC LLD drivers
@@ -47,28 +47,58 @@ nvme_fc_fpin_rcv()
 ├── be32_to_cpu(fpin->desc_len)                                   [line 3803]  
 ├── min_t(u32, bytes_remain, be32_to_cpu(fpin->desc_len))         [line 3803]
 ├── be32_to_cpu(tlv->hdr.desc_tag)                                [line 3807]
-├── nvme_fc_fpin_li_lport_update(lport, &tlv->li)                 [line 3810] ← Key handler
+├── nvme_fc_fpin_li_lport_update(lport, &tlv->li)                 [line 3810] ← **REFACTORED** Key handler
 ├── FC_TLV_DESC_SZ_FROM_LENGTH(tlv)                               [line 3816]
 └── fc_tlv_next_desc(tlv)                                         [line 3817]
 ```
 
-## Deep Dive: nvme_fc_fpin_li_lport_update Function
+## Deep Dive: **REFACTORED** nvme_fc_fpin_li_lport_update Function
 ```
-nvme_fc_fpin_li_lport_update()  [line 3744]
-├── be32_to_cpu(li->pname_count)                                  [line 3746]
-├── be64_to_cpu(li->attached_wwpn)                                [line 3747]  
-├── be64_to_cpu(li->pname_list[i])                                [line 3752]
-├── nvme_fc_rport_from_wwpn(lport, wwpn)                          [line 3754]
+nvme_fc_fpin_li_lport_update()  [line 3766] **SIMPLIFIED IMPLEMENTATION**
+├── be32_to_cpu(li->pname_count)                                  [line 3768]
+├── be64_to_cpu(li->attached_wwpn)                                [line 3769]  
+├── **REFACTORED LOOP**:
+│   ├── be64_to_cpu(li->pname_list[i])                            [line 3773]
+│   └── nvme_fc_fpin_set_state(lport, wwpn, true)                 [line 3776] ← **NEW** Consolidated call
+│
+└── nvme_fc_fpin_set_state(lport, attached_wwpn, true)            [line 3779] ← **NEW** Consolidated call
+```
+
+## **NEW**: Deep Dive: nvme_fc_fpin_set_state Function 
+```
+nvme_fc_fpin_set_state(lport, wwpn, marginal)  [line 3764] **ENHANCED FUNCTION**
+├── nvme_fc_rport_from_wwpn(lport, wwpn)                          [line 3769]
 │   └── Search rport by WWPN in lport->endp_list                  [line 3732]
 │       └── nvme_fc_rport_get(rport)                              [line 3733]
-├── set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags)               [line 3762, 3774]
-├── spin_lock_irq(&rport->lock) / spin_unlock_irq(&rport->lock)   [line 3760, 3763]
-└── nvme_fc_rport_put(rport)                                      [line 3765, 3776]
+├── spin_lock_irq(&rport->lock)                                   [line 3753]
+├── list_for_each_entry(ctrl, &rport->ctrl_list, ctrl_list)       [line 3754]
+│   ├── **ENHANCED**: set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags)    [if marginal=true]
+│   └── **NEW**: clear_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags)       [if marginal=false]
+├── spin_unlock_irq(&rport->lock)                                 [line 3760]
+└── nvme_fc_rport_put(rport)                                      [line 3761]
+```
+
+## **NEW**: Cross-Layer Integration Points
+```
+**MULTIPLE CALLERS can now invoke nvme_fc_fpin_set_state():**
+
+1. **FPIN Path** (Original):
+   nvme_fc_fpin_rcv() → nvme_fc_fpin_li_lport_update() → nvme_fc_fpin_set_state()
+
+2. **NEW: SCSI FC Transport Path**:
+   fc_rport_set_marginal_state() → nvme_fc_fpin_set_state()
+   ├── Find lport via nvme_fc_lport_from_wwpn(local_wwpn)
+   ├── Call nvme_fc_fpin_set_state(lport, rport->port_name, marginal)
+   └── Cleanup with nvme_fc_lport_put(lport)
+
+3. **NEW: Future Extension Points**:
+   Any kernel component can call nvme_fc_fpin_set_state() for coordinated
+   NVMe controller marginal state management
 ```
 
 ## Detailed Analysis
 
-### 1. FPIN Processing Flow
+### 1. **ENHANCED** FPIN Processing Flow
 ```
 1. FC Fabric detects performance issue/link degradation
 2. FC Switch sends ELS FPIN frame to affected ports
@@ -78,7 +108,21 @@ nvme_fc_fpin_li_lport_update()  [line 3744]
    - fc_host_fpin_rcv() for SCSI transport layer
    - nvme_fc_fpin_rcv() for NVMe-FC layer
 6. nvme_fc_fpin_rcv() processes FPIN descriptors
-7. For Link Integrity events, marks affected controllers as MARGINAL
+7. **REFACTORED**: For Link Integrity events, calls nvme_fc_fpin_set_state()
+8. **NEW**: nvme_fc_fpin_set_state() handles controller state management
+9. **NEW**: Function is also available for cross-layer coordination
+```
+
+### **NEW**: 1.5 Alternative Processing Paths
+```
+**Path A: FPIN-Driven (Original, now refactored)**
+FC Fabric → FC Driver → nvme_fc_fpin_rcv() → nvme_fc_fpin_set_state()
+
+**Path B: SCSI-Driven (NEW)**  
+User/Script → sysfs → fc_rport_set_marginal_state() → nvme_fc_fpin_set_state()
+
+**Path C: Programmatic (NEW)**
+Kernel Code → nvme_fc_fpin_set_state() [Direct calls for automated management]
 ```
 
 ### 2. FPIN Structure Processing
@@ -141,22 +185,47 @@ lpfc_els.c
         └── lpfc_els_rcv_fpin()
 ```
 
-## Function Behavior
+## **ENHANCED** Function Behavior
 
 ### Supported FPIN Types
-- **Link Integrity Notifications** (`ELS_DTAG_LNK_INTEGRITY`): Processed
+- **Link Integrity Notifications** (`ELS_DTAG_LNK_INTEGRITY`): Processed via **REFACTORED** handler
 - **Other FPIN types**: Ignored (default case in switch)
 
-### Link Integrity Processing
+### **REFACTORED** Link Integrity Processing
 1. **Parse descriptor**: Extract affected port WWPNs and attached WWPN
-2. **Find rports**: Look up NVMe-FC remote ports by WWPN
-3. **Mark controllers**: Set `NVME_CTRL_MARGINAL` flag on affected controllers
-4. **Reference counting**: Properly get/put rport references
+2. **Simplified calls**: Use `nvme_fc_fpin_set_state(lport, wwpn, true)` for all affected ports
+3. **Centralized logic**: All controller state management now in single function
+4. **Enhanced capabilities**: Function supports both setting and clearing marginal state
+
+### **NEW**: Enhanced State Management
+```c
+nvme_fc_fpin_set_state(lport, wwpn, marginal):
+  - marginal=true:  set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags)
+  - marginal=false: clear_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags)
+  - Thread-safe with proper locking
+  - Handles reference counting automatically
+```
+
+### **NEW**: Cross-Layer Helper Functions
+```c
+nvme_fc_lport_from_wwpn(wwpn):
+  - Searches global nvme_fc_lport_list
+  - Returns lport with incremented reference count
+  - Thread-safe with nvme_fc_lock protection
+  - Exported for cross-layer access
+
+nvme_fc_lport_put(lport):
+  - Now exported for external cleanup
+  - Decrements reference count safely
+  - Triggers cleanup when count reaches zero
+```
 
 ### Error Handling
 - **NULL localport**: Return silently
 - **Invalid lengths**: Stop processing when insufficient bytes remain
 - **Missing rports**: Continue processing other WWPNs in the list
+- **NEW**: **Missing lport**: `nvme_fc_fpin_set_state()` handles gracefully
+- **NEW**: **Reference leaks**: Prevented by proper get/put patterns
 
 ## Integration with NVMe-FC Subsystem
 
@@ -171,16 +240,51 @@ lpfc_els.c
 - Maintains reference counting with nvme_fc_rport_get/put
 
 ## Files Involved
-1. **drivers/nvme/host/fc.c** - Main implementation
-2. **include/linux/nvme-fc-driver.h** - Function declaration and interface
-3. **drivers/scsi/qla2xxx/qla_isr.c** - QLA2xxx driver caller
-4. **drivers/scsi/lpfc/lpfc_els.c** - LPFC driver caller  
-5. **include/uapi/scsi/fc/fc_els.h** - FPIN structure definitions
+1. **drivers/nvme/host/fc.c** - **ENHANCED** Main implementation with refactored functions
+   - **REFACTORED**: `nvme_fc_fpin_li_lport_update()` - Simplified to use helper function
+   - **NEW**: `nvme_fc_fpin_set_state()` - Enhanced state management function
+   - **NEW**: `nvme_fc_lport_from_wwpn()` - Cross-layer bridge function  
+   - **EXPORTED**: `nvme_fc_lport_put()` - Now available for external cleanup
+   
+2. **include/linux/nvme-fc-driver.h** - **ENHANCED** Function declarations
+   - **NEW**: `nvme_fc_fpin_set_state()` declaration
+   - **NEW**: `nvme_fc_lport_from_wwpn()` declaration
+   - **NEW**: `nvme_fc_lport_put()` declaration
+   
+3. **drivers/scsi/qla2xxx/qla_isr.c** - QLA2xxx driver caller (unchanged)
+4. **drivers/scsi/lpfc/lpfc_els.c** - LPFC driver caller (unchanged)
+5. **include/uapi/scsi/fc/fc_els.h** - FPIN structure definitions (unchanged)
+6. **NEW**: **drivers/scsi/scsi_transport_fc.c** - Cross-layer integration
+   - Uses `nvme_fc_lport_from_wwpn()` to find NVMe-FC lports
+   - Calls `nvme_fc_fpin_set_state()` for coordinated state management
+   - Forward declarations to avoid header dependency issues
 
-## Hardware/Firmware Context
+## **ENHANCED** Hardware/Firmware Context
 - **FC Switches/Directors**: Generate FPIN notifications
-- **FC HBAs**: Receive and process FPIN frames in firmware/hardware
+- **FC HBAs**: Receive and process FPIN frames in firmware/hardware  
 - **Driver**: Software processing of FPIN content
 - **NVMe-FC**: Performance-aware path management based on fabric health
+- **NEW**: **Cross-Layer Coordination**: SCSI and NVMe-FC protocols share state information
+- **NEW**: **Unified Management**: Single interface controls multiple transport protocols
 
-This function is critical for NVMe-FC performance management and provides fabric-aware intelligence for multipath I/O optimization.
+## **ENHANCED** System Integration
+
+### **Architectural Improvements**
+- **Code Reuse**: `nvme_fc_fpin_set_state()` eliminates duplication
+- **Modularity**: Helper functions enable cross-layer integration
+- **Maintainability**: Centralized state management logic
+- **Extensibility**: Framework ready for additional FC4 protocols
+
+### **Performance Impact**  
+- **Reduced Complexity**: Simplified call paths in FPIN processing
+- **Better Resource Management**: Proper reference counting prevents leaks
+- **Enhanced Multipath**: More accurate path state information for intelligent routing
+- **Faster Recovery**: Coordinated state management across all protocols
+
+### **Operational Benefits**
+- **Unified Control**: Single sysfs interface affects both SCSI and NVMe-FC
+- **Consistent State**: Port states synchronized across all protocols
+- **Better Diagnostics**: Centralized logging and error handling
+- **Future-Ready**: Architecture supports additional enhancements
+
+This **enhanced** function is now the cornerstone of a unified FC port management system, providing fabric-aware intelligence for both SCSI and NVMe-FC multipath I/O optimization while maintaining clean architectural boundaries between transport layers.
