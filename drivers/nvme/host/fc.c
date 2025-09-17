@@ -3767,7 +3767,6 @@ nvme_fc_fpin_li_lport_update(struct nvme_fc_lport *lport, struct fc_fn_li_desc *
 {
 	unsigned int i, pname_count = be32_to_cpu(li->pname_count);
 	u64 attached_wwpn = be64_to_cpu(li->attached_wwpn);
-	struct nvme_fc_rport *attached_rport;
 
 	for (i = 0; i < pname_count; i++) {
 		u64 wwpn = be64_to_cpu(li->pname_list[i]);
