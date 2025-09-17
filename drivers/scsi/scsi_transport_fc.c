@@ -23,6 +23,7 @@
 #include <scsi/scsi_netlink_fc.h>
 #include <scsi/scsi_bsg_fc.h>
 #include <uapi/scsi/fc/fc_els.h>
+#include <linux/nvme-fc-driver.h>
 #include "scsi_priv.h"
 
 static int fc_queue_work(struct Scsi_Host *, struct work_struct *);
@@ -1236,9 +1237,22 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Online
 		 * Allow only Online->Marginal
 		 */
-		if (rport->port_state == FC_PORTSTATE_ONLINE)
+		if (rport->port_state == FC_PORTSTATE_ONLINE) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			{
+				struct Scsi_Host *shost = rport_to_shost(rport);
+				struct nvme_fc_lport *lport;
+				u64 local_wwpn = fc_host_port_name(shost);
+				
+				lport = nvme_fc_lport_from_wwpn(local_wwpn);
+				if (lport) {
+					nvme_fc_fpin_set_state(lport, rport->port_name, true);
+					nvme_fc_lport_put(lport);
+				}
+			}
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else if (port_state == FC_PORTSTATE_ONLINE) {
 		/*
@@ -1246,9 +1260,22 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Marginal
 		 * Allow only Marginal->Online
 		 */
-		if (rport->port_state == FC_PORTSTATE_MARGINAL)
+		if (rport->port_state == FC_PORTSTATE_MARGINAL) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			{
+				struct Scsi_Host *shost = rport_to_shost(rport);
+				struct nvme_fc_lport *lport;
+				u64 local_wwpn = fc_host_port_name(shost);
+				
+				lport = nvme_fc_lport_from_wwpn(local_wwpn);
+				if (lport) {
+					nvme_fc_fpin_set_state(lport, rport->port_name, false);
+					nvme_fc_lport_put(lport);
+				}
+			}
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else
 		return -EINVAL;
