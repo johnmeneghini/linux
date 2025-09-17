@@ -3774,8 +3774,6 @@ nvme_fc_fpin_li_lport_update(struct nvme_fc_lport *lport, struct fc_fn_li_desc *
 		if (wwpn != attached_wwpn)
 			nvme_fc_fpin_set_state(lport, wwpn, true);
 	}
-
-	nvme_fc_fpin_set_state(lport, attached_wwpn, true);
 }
 
 /**
