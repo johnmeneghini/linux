@@ -10261,9 +10261,12 @@ lpfc_els_rcv_fpin(struct lpfc_vport *vport, void *p, u32 fpin_length)
 			fc_host_fpin_rcv(lpfc_shost_from_vport(vport),
 					 fpin_length, (char *)fpin, 0);
 #if (IS_ENABLED(CONFIG_NVME_FC))
-			if (vport->cfg_enable_fc4_type & LPFC_ENABLE_NVME)
+			if (vport->cfg_enable_fc4_type & LPFC_ENABLE_NVME) {
+				fc_host_fpin_set_rport_marginal(lpfc_shost_from_vport(vport),
+								fpin_length, (char *)fpin);
 				nvme_fc_fpin_rcv(vport->localport,
 						 fpin_length, (char *)fpin);
+			}
 #endif
 		}
 		desc_cnt++;

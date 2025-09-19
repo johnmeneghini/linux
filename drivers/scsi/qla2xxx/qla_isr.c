@@ -47,6 +47,7 @@ qla27xx_process_purex_fpin(struct scsi_qla_host *vha, struct purex_item *item)
 
 	fc_host_fpin_rcv(vha->host, pkt_size, (char *)pkt, 0);
 #if (IS_ENABLED(CONFIG_NVME_FC))
+	fc_host_fpin_set_rport_marginal(vha->host, pkt_size, (char *)pkt);
 	nvme_fc_fpin_rcv(vha->nvme_local_port, pkt_size, (char *)pkt);
 #endif
 }
