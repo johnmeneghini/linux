@@ -881,6 +881,178 @@ fc_fpin_congn_stats_update(struct Scsi_Host *shost,
 }
 
 /**
+ * fc_host_fpin_set_rport_marginal - Set FC_PORTSTATE_MARGINAL for rports in FPIN
+ * @shost:		host the FPIN was received on
+ * @fpin_len:		length of FPIN payload, in bytes
+ * @fpin_buf:		pointer to FPIN payload
+ *
+ * This function processes a received FPIN and sets FC_PORTSTATE_MARGINAL
+ * on all remote ports identified in the FPIN descriptors. It should be called
+ * before nvme_fc_fpin_rcv() to ensure proper cross-layer coordination.
+ *
+ * Notes:
+ *	This routine assumes no locks are held on entry.
+ */
+void
+fc_host_fpin_set_rport_marginal(struct Scsi_Host *shost, u32 fpin_len, char *fpin_buf)
+{
+	struct fc_els_fpin *fpin = (struct fc_els_fpin *)fpin_buf;
+	union fc_tlv_desc *tlv;
+	u32 bytes_remain;
+	u32 dtag;
+	struct fc_rport *rport;
+	u64 wwpn;
+	u8 i;
+
+	/* Parse FPIN descriptors */
+	tlv = &fpin->fpin_desc[0];
+	bytes_remain = fpin_len - offsetof(struct fc_els_fpin, fpin_desc);
+	bytes_remain = min_t(u32, bytes_remain, be32_to_cpu(fpin->desc_len));
+
+	while (bytes_remain >= FC_TLV_DESC_HDR_SZ &&
+	       bytes_remain >= FC_TLV_DESC_SZ_FROM_LENGTH(tlv)) {
+		dtag = be32_to_cpu(tlv->hdr.desc_tag);
+		switch (dtag) {
+		case ELS_DTAG_LNK_INTEGRITY:
+		{
+			struct fc_fn_li_desc *li_desc = &tlv->li;
+
+			/* Set marginal state for attached_wwpn */
+			wwpn = be64_to_cpu(li_desc->attached_wwpn);
+			rport = fc_find_rport_by_wwpn(shost, wwpn);
+			if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
+			    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
+				rport->port_state = FC_PORTSTATE_MARGINAL;
+#if (IS_ENABLED(CONFIG_NVME_FC))
+				{
+					struct nvme_fc_lport *lport;
+					u64 local_wwpn = fc_host_port_name(shost);
+
+					lport = nvme_fc_lport_from_wwpn(local_wwpn);
+					if (lport) {
+						nvme_fc_fpin_set_state(lport, wwpn, true);
+						nvme_fc_lport_put(lport);
+					}
+				}
+#endif
+			}
+
+			/* Set marginal state for WWPNs in pname_list */
+			if (be32_to_cpu(li_desc->pname_count) > 0) {
+				for (i = 0; i < be32_to_cpu(li_desc->pname_count); i++) {
+					wwpn = be64_to_cpu(li_desc->pname_list[i]);
+					rport = fc_find_rport_by_wwpn(shost, wwpn);
+					if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
+					    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+					     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
+						rport->port_state = FC_PORTSTATE_MARGINAL;
+#if (IS_ENABLED(CONFIG_NVME_FC))
+						{
+							struct nvme_fc_lport *lport;
+							u64 local_wwpn = fc_host_port_name(shost);
+
+							lport = nvme_fc_lport_from_wwpn(local_wwpn);
+							if (lport) {
+								nvme_fc_fpin_set_state(lport, wwpn, true);
+								nvme_fc_lport_put(lport);
+							}
+						}
+#endif
+					}
+				}
+			}
+			break;
+		}
+		case ELS_DTAG_DELIVERY:
+		{
+			struct fc_fn_deli_desc *dn_desc = &tlv->deli;
+
+			/* Set marginal state for attached_wwpn */
+			wwpn = be64_to_cpu(dn_desc->attached_wwpn);
+			rport = fc_find_rport_by_wwpn(shost, wwpn);
+			if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
+			    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
+				rport->port_state = FC_PORTSTATE_MARGINAL;
+#if (IS_ENABLED(CONFIG_NVME_FC))
+				{
+					struct nvme_fc_lport *lport;
+					u64 local_wwpn = fc_host_port_name(shost);
+
+					lport = nvme_fc_lport_from_wwpn(local_wwpn);
+					if (lport) {
+						nvme_fc_fpin_set_state(lport, wwpn, true);
+						nvme_fc_lport_put(lport);
+					}
+				}
+#endif
+			}
+			break;
+		}
+		case ELS_DTAG_PEER_CONGEST:
+		{
+			struct fc_fn_peer_congn_desc *pc_desc = &tlv->peer_congn;
+
+			/* Set marginal state for attached_wwpn */
+			wwpn = be64_to_cpu(pc_desc->attached_wwpn);
+			rport = fc_find_rport_by_wwpn(shost, wwpn);
+			if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
+			    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
+				rport->port_state = FC_PORTSTATE_MARGINAL;
+#if (IS_ENABLED(CONFIG_NVME_FC))
+				{
+					struct nvme_fc_lport *lport;
+					u64 local_wwpn = fc_host_port_name(shost);
+
+					lport = nvme_fc_lport_from_wwpn(local_wwpn);
+					if (lport) {
+						nvme_fc_fpin_set_state(lport, wwpn, true);
+						nvme_fc_lport_put(lport);
+					}
+				}
+#endif
+			}
+
+			/* Set marginal state for WWPNs in pname_list */
+			if (be32_to_cpu(pc_desc->pname_count) > 0) {
+				for (i = 0; i < be32_to_cpu(pc_desc->pname_count); i++) {
+					wwpn = be64_to_cpu(pc_desc->pname_list[i]);
+					rport = fc_find_rport_by_wwpn(shost, wwpn);
+					if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
+					    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+					     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
+						rport->port_state = FC_PORTSTATE_MARGINAL;
+#if (IS_ENABLED(CONFIG_NVME_FC))
+						{
+							struct nvme_fc_lport *lport;
+							u64 local_wwpn = fc_host_port_name(shost);
+
+							lport = nvme_fc_lport_from_wwpn(local_wwpn);
+							if (lport) {
+								nvme_fc_fpin_set_state(lport, wwpn, true);
+								nvme_fc_lport_put(lport);
+							}
+						}
+#endif
+					}
+				}
+			}
+			break;
+		}
+		case ELS_DTAG_CONGESTION:
+			/* Congestion descriptor doesn't contain specific WWPNs to mark marginal */
+			break;
+		}
+
+		bytes_remain -= FC_TLV_DESC_SZ_FROM_LENGTH(tlv);
+		tlv = fc_tlv_next_desc(tlv);
+	}
+}
+EXPORT_SYMBOL(fc_host_fpin_set_rport_marginal);
+
+/**
  * fc_host_fpin_rcv - routine to process a received FPIN.
  * @shost:		host the FPIN was received on
  * @fpin_len:		length of FPIN payload, in bytes
@@ -1250,7 +1422,7 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 				struct Scsi_Host *shost = rport_to_shost(rport);
 				struct nvme_fc_lport *lport;
 				u64 local_wwpn = fc_host_port_name(shost);
-				
+
 				lport = nvme_fc_lport_from_wwpn(local_wwpn);
 				if (lport) {
 					nvme_fc_fpin_set_state(lport, rport->port_name, true);
@@ -1273,7 +1445,7 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 				struct Scsi_Host *shost = rport_to_shost(rport);
 				struct nvme_fc_lport *lport;
 				u64 local_wwpn = fc_host_port_name(shost);
-				
+
 				lport = nvme_fc_lport_from_wwpn(local_wwpn);
 				if (lport) {
 					nvme_fc_fpin_set_state(lport, rport->port_name, false);
