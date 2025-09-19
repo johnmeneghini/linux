@@ -191,6 +191,34 @@ This created change [4b39bc27408c2](https://github.com/torvalds/linux/commit/1b0
 
 [nvme_fc_fpin_rcv_call_graph.md](https://github.com/johnmeneghini/linux/blob/fpin_v10/nvme_fc_fpin_rcv_call_graph.md)
 
+## Prompt 11
+
+`Build a call graph for all Code That Sets or Clears FC_PORTSTATE_MARGINAL`
+
+[fc_portstate_marginal_call_graph.md](https://github.com/johnmeneghini/linux/blob/fpin_v10/fc_portstate_marginal_call_graph.md)
+
+## Prompt 12
+
+`Build a call graph for lpfc_nvme_info_show Function`
+
+[lpfc_nvme_info_show_call_graph.md](https://github.com/johnmeneghini/linux/blob/fpin_v10/lpfc_nvme_info_show_call_graph.md)
+
+## Prompt 13
+
+`Please build a call graph for the function fc_host_fpin_rcv and point out where the FC_PORTSTATE_MARGINAL state is set in the call graph.`
+
+[fc_host_fpin_rcv_call_graph.md](https://github.com/johnmeneghini/linux/blob/fpin_v10/fc_host_fpin_rcv_call_graph.md)
+
+The AI was not able to answer this question.  It said:
+
+```
+This analysis shows that while FPIN messages provide valuable performance
+information that could inform decisions about marking ports as marginal, the
+actual state change is a separate administrative action. The system maintains
+clear separation between notification/monitoring (FPIN processing) and state
+management (marginal state setting).
+```
+
 ## End
 
 These changes are ready for testing and refinement.
