@@ -219,6 +219,29 @@ clear separation between notification/monitoring (FPIN processing) and state
 management (marginal state setting).
 ```
 
+## Prompt 14
+
+```
+I would like the nvme_fc_fpin_rcv function to set the FC_PORTSTATE_MARGINAL state on all rports that correspond to the FPIN ELS.
+Please create a separate function that does this.  This function should be called by both qla27xx_process_purex_fpin and
+lpfc_els_rcv_fpin prior to calling nvme_fc_fpin_rcv  when #if (IS_ENABLED(CONFIG_NVME_FC)) is true.
+
+        modified:   drivers/scsi/lpfc/lpfc_els.c
+        modified:   drivers/scsi/qla2xxx/qla_isr.c
+        modified:   drivers/scsi/scsi_transport_fc.c
+        modified:   include/scsi/scsi_transport_fc.h
+```
+
+change [a6c07764b16](https://github.com/torvalds/linux/commit/a6c07764b16a993c839a20a396be3821bfb3dd2d)
+change [ebceb202daf7](https://github.com/torvalds/linux/commit/ebceb202daf7c53285c97cead6c90153316b86bd)
+
+## Prompt 15
+
+`Please create the file fc_host_fpin_set_rport_marginal.md and make it contain all of the above comments.`
+
+[fc_host_fpin_set_rport_marginal.md](https://github.com/johnmeneghini/linux/blob/fpin_v10/fc_host_fpin_set_rport_marginal.md)
+
+
 ## End
 
 These changes are ready for testing and refinement.
