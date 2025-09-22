@@ -259,11 +259,12 @@ nvme_fc_free_lport(struct kref *ref)
 	kfree(lport);
 }
 
-static void
+void
 nvme_fc_lport_put(struct nvme_fc_lport *lport)
 {
 	kref_put(&lport->ref, nvme_fc_free_lport);
 }
+EXPORT_SYMBOL_GPL(nvme_fc_lport_put);
 
 static int
 nvme_fc_lport_get(struct nvme_fc_lport *lport)
@@ -3740,40 +3741,60 @@ static struct nvme_fc_rport *nvme_fc_rport_from_wwpn(struct nvme_fc_lport *lport
 	return NULL;
 }
 
+struct nvme_fc_lport *
+nvme_fc_lport_from_wwpn(u64 wwpn)
+{
+	struct nvme_fc_lport *lport;
+	unsigned long flags;
+
+	spin_lock_irqsave(&nvme_fc_lock, flags);
+	list_for_each_entry(lport, &nvme_fc_lport_list, port_list) {
+		if (lport->localport.port_name == wwpn &&
+		    lport->localport.port_state == FC_OBJSTATE_ONLINE) {
+			if (nvme_fc_lport_get(lport)) {
+				spin_unlock_irqrestore(&nvme_fc_lock, flags);
+				return lport;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&nvme_fc_lock, flags);
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(nvme_fc_lport_from_wwpn);
+
+void
+nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal)
+{
+	struct nvme_fc_rport *rport;
+	struct nvme_fc_ctrl *ctrl;
+
+	rport = nvme_fc_rport_from_wwpn(lport, wwpn);
+	if (!rport)
+		return;
+
+	spin_lock_irq(&rport->lock);
+	list_for_each_entry(ctrl, &rport->ctrl_list, ctrl_list) {
+		if (marginal)
+			set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags);
+		else
+			clear_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags);
+	}
+	spin_unlock_irq(&rport->lock);
+	nvme_fc_rport_put(rport);
+}
+EXPORT_SYMBOL_GPL(nvme_fc_fpin_set_state);
+
 static void
 nvme_fc_fpin_li_lport_update(struct nvme_fc_lport *lport, struct fc_fn_li_desc *li)
 {
 	unsigned int i, pname_count = be32_to_cpu(li->pname_count);
 	u64 attached_wwpn = be64_to_cpu(li->attached_wwpn);
-	struct nvme_fc_rport *attached_rport;
 
 	for (i = 0; i < pname_count; i++) {
-		struct nvme_fc_rport *rport;
 		u64 wwpn = be64_to_cpu(li->pname_list[i]);
 
-		rport = nvme_fc_rport_from_wwpn(lport, wwpn);
-		if (!rport)
-			continue;
-		if (wwpn != attached_wwpn) {
-			struct nvme_fc_ctrl *ctrl;
-
-			spin_lock_irq(&rport->lock);
-			list_for_each_entry(ctrl, &rport->ctrl_list, ctrl_list)
-				set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags);
-			spin_unlock_irq(&rport->lock);
-		}
-		nvme_fc_rport_put(rport);
-	}
-
-	attached_rport = nvme_fc_rport_from_wwpn(lport, attached_wwpn);
-	if (attached_rport) {
-		struct nvme_fc_ctrl *ctrl;
-
-		spin_lock_irq(&attached_rport->lock);
-		list_for_each_entry(ctrl, &attached_rport->ctrl_list, ctrl_list)
-			set_bit(NVME_CTRL_MARGINAL, &ctrl->ctrl.flags);
-		spin_unlock_irq(&attached_rport->lock);
-		nvme_fc_rport_put(attached_rport);
+		if (wwpn != attached_wwpn)
+			nvme_fc_fpin_set_state(lport, wwpn, true);
 	}
 }
 
