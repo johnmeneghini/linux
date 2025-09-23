@@ -541,6 +541,7 @@ void nvme_fc_fpin_rcv(struct nvme_fc_local_port *localport,
 
 struct nvme_fc_lport;
 void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
+void nvme_fc_modify_rport_fpin_state(u64 local_wwpn, u64 remote_wwpn, bool marginal);
 
 /*
  * Routine called to pass a NVME-FC LS request, received by the lldd,
