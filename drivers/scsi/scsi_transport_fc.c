@@ -27,8 +27,6 @@
 
 #if (IS_ENABLED(CONFIG_NVME_FC))
 void nvme_fc_modify_rport_fpin_state(u64 local_wwpn, u64 remote_wwpn, bool marginal);
-struct nvme_fc_lport;
-void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
 #endif
 
 static int fc_queue_work(struct Scsi_Host *, struct work_struct *);
