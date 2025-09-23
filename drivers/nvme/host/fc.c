@@ -259,12 +259,11 @@ nvme_fc_free_lport(struct kref *ref)
 	kfree(lport);
 }
 
-void
+static void
 nvme_fc_lport_put(struct nvme_fc_lport *lport)
 {
 	kref_put(&lport->ref, nvme_fc_free_lport);
 }
-EXPORT_SYMBOL_GPL(nvme_fc_lport_put);
 
 static int
 nvme_fc_lport_get(struct nvme_fc_lport *lport)
@@ -3747,7 +3746,7 @@ static struct nvme_fc_rport *nvme_fc_rport_from_wwpn(struct nvme_fc_lport *lport
 	return NULL;
 }
 
-struct nvme_fc_lport *
+static struct nvme_fc_lport *
 nvme_fc_lport_from_wwpn(u64 wwpn)
 {
 	struct nvme_fc_lport *lport;
@@ -3766,7 +3765,6 @@ nvme_fc_lport_from_wwpn(u64 wwpn)
 	spin_unlock_irqrestore(&nvme_fc_lock, flags);
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(nvme_fc_lport_from_wwpn);
 
 void
 nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal)
