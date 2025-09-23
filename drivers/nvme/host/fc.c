@@ -3788,6 +3788,20 @@ nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal)
 }
 EXPORT_SYMBOL_GPL(nvme_fc_fpin_set_state);
 
+void
+nvme_fc_modify_rport_fpin_state(u64 local_wwpn, u64 remote_wwpn, bool marginal)
+{
+	struct nvme_fc_lport *lport;
+
+	lport = nvme_fc_lport_from_wwpn(local_wwpn);
+	if (!lport)
+		return;
+
+	nvme_fc_fpin_set_state(lport, remote_wwpn, marginal);
+	nvme_fc_lport_put(lport);
+}
+EXPORT_SYMBOL_GPL(nvme_fc_modify_rport_fpin_state);
+
 static void
 nvme_fc_fpin_li_lport_update(struct nvme_fc_lport *lport, struct fc_fn_li_desc *li)
 {
