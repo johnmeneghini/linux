@@ -27,8 +27,6 @@
 
 #if (IS_ENABLED(CONFIG_NVME_FC))
 struct nvme_fc_lport;
-struct nvme_fc_lport *nvme_fc_lport_from_wwpn(u64 wwpn);
-void nvme_fc_lport_put(struct nvme_fc_lport *lport);
 void nvme_fc_fpin_set_state(struct nvme_fc_lport *lport, u64 wwpn, bool marginal);
 #endif
 
