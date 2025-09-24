@@ -1294,6 +1294,8 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 						const char *buf, size_t count)
 {
 	struct fc_rport *rport = transport_class_to_rport(dev);
+	struct Scsi_Host *shost = rport_to_shost(rport);
+	u64 local_wwpn = fc_host_port_name(shost);
 	enum fc_port_state port_state;
 	int ret = 0;
 
@@ -1306,9 +1308,13 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Online
 		 * Allow only Online->Marginal
 		 */
-		if (rport->port_state == FC_PORTSTATE_ONLINE)
+		if (rport->port_state == FC_PORTSTATE_ONLINE) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			nvme_fc_modify_rport_fpin_state(local_wwpn,
+					rport->port_name, true);
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else if (port_state == FC_PORTSTATE_ONLINE) {
 		/*
@@ -1316,9 +1322,13 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 		 * current rport state is Marginal
 		 * Allow only Marginal->Online
 		 */
-		if (rport->port_state == FC_PORTSTATE_MARGINAL)
+		if (rport->port_state == FC_PORTSTATE_MARGINAL) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+			nvme_fc_modify_rport_fpin_state(local_wwpn,
+					rport->port_name, false);
+#endif
+		} else if (port_state != rport->port_state)
 			return -EINVAL;
 	} else
 		return -EINVAL;
