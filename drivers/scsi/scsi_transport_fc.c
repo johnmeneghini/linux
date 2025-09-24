@@ -640,6 +640,7 @@ EXPORT_SYMBOL(fc_host_post_vendor_event);
  *
  * Notes:
  *	This routine assumes no locks are held on entry.
+ *	This routine returns an rport with the shost->host_lock held.
  */
 struct fc_rport *
 fc_find_rport_by_wwpn(struct Scsi_Host *shost, u64 wwpn)
@@ -653,10 +654,8 @@ fc_find_rport_by_wwpn(struct Scsi_Host *shost, u64 wwpn)
 		if (rport->port_state != FC_PORTSTATE_ONLINE)
 			continue;
 
-		if (rport->port_name == wwpn) {
-			spin_unlock_irqrestore(shost->host_lock, flags);
+		if (rport->port_name == wwpn)
 			return rport;
-		}
 	}
 
 	spin_unlock_irqrestore(shost->host_lock, flags);
@@ -755,14 +754,17 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_fn_li_desc *li_desc)
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
 	u16 event_type = be16_to_cpu(li_desc->event_type);
 	u64 wwpn;
+	unsigned long flags;
 
 	rport = fc_find_rport_by_wwpn(shost,
 				      be64_to_cpu(li_desc->attached_wwpn));
-	if (rport &&
-	    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
-	     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
-		attach_rport = rport;
-		fc_li_stats_update(event_type, &attach_rport->fpin_stats);
+	if (rport) {
+		if (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+			attach_rport = rport;
+			fc_li_stats_update(event_type, &attach_rport->fpin_stats);
+		}
+		spin_unlock_irqrestore(shost->host_lock, flags);
 	}
 
 	if (be32_to_cpu(li_desc->pname_count) > 0) {
@@ -771,13 +773,14 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_fn_li_desc *li_desc)
 		    i++) {
 			wwpn = be64_to_cpu(li_desc->pname_list[i]);
 			rport = fc_find_rport_by_wwpn(shost, wwpn);
-			if (rport &&
-			    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
-			    rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
-				if (rport == attach_rport)
-					continue;
-				fc_li_stats_update(event_type,
-						   &rport->fpin_stats);
+			if (rport) {
+				if (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+				    rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+					if (rport != attach_rport)
+						fc_li_stats_update(event_type,
+							   &rport->fpin_stats);
+				}
+				spin_unlock_irqrestore(shost->host_lock, flags);
 			}
 		}
 	}
@@ -801,15 +804,18 @@ fc_fpin_delivery_stats_update(struct Scsi_Host *shost,
 	struct fc_rport *attach_rport = NULL;
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
 	u32 reason_code = be32_to_cpu(dn_desc->deli_reason_code);
+	unsigned long flags;
 
 	rport = fc_find_rport_by_wwpn(shost,
 				      be64_to_cpu(dn_desc->attached_wwpn));
-	if (rport &&
-	    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
-	     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
-		attach_rport = rport;
-		fc_delivery_stats_update(reason_code,
-					 &attach_rport->fpin_stats);
+	if (rport) {
+		if (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+			attach_rport = rport;
+			fc_delivery_stats_update(reason_code,
+					&attach_rport->fpin_stats);
+		}
+		spin_unlock_irqrestore(shost->host_lock, flags);
 	}
 
 	if (fc_host->port_name == be64_to_cpu(dn_desc->attached_wwpn))
@@ -832,14 +838,17 @@ fc_fpin_peer_congn_stats_update(struct Scsi_Host *shost,
 	struct fc_rport *attach_rport = NULL;
 	u16 event_type = be16_to_cpu(pc_desc->event_type);
 	u64 wwpn;
+	unsigned long flags;
 
 	rport = fc_find_rport_by_wwpn(shost,
 				      be64_to_cpu(pc_desc->attached_wwpn));
-	if (rport &&
-	    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
-	     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
-		attach_rport = rport;
-		fc_cn_stats_update(event_type, &attach_rport->fpin_stats);
+	if (rport) {
+		if (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+			rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+			attach_rport = rport;
+			fc_cn_stats_update(event_type, &attach_rport->fpin_stats);
+		}
+		spin_unlock_irqrestore(shost->host_lock, flags);
 	}
 
 	if (be32_to_cpu(pc_desc->pname_count) > 0) {
@@ -848,13 +857,14 @@ fc_fpin_peer_congn_stats_update(struct Scsi_Host *shost,
 		    i++) {
 			wwpn = be64_to_cpu(pc_desc->pname_list[i]);
 			rport = fc_find_rport_by_wwpn(shost, wwpn);
-			if (rport &&
-			    (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
-			     rport->roles & FC_PORT_ROLE_NVME_TARGET)) {
-				if (rport == attach_rport)
-					continue;
-				fc_cn_stats_update(event_type,
-						   &rport->fpin_stats);
+			if (rport) {
+				if (rport->roles & FC_PORT_ROLE_FCP_TARGET ||
+					rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+					if (rport != attach_rport)
+						fc_cn_stats_update(event_type,
+								&rport->fpin_stats);
+				}
+				spin_unlock_irqrestore(shost->host_lock, flags);
 			}
 		}
 	}
@@ -928,8 +938,6 @@ fc_host_fpin_set_nvme_rport_marginal(struct Scsi_Host *shost, u32 fpin_len, char
 					rport = fc_find_rport_by_wwpn(shost, wwpn);
 					if (!rport)
 						continue;
-
-					spin_lock_irqsave(shost->host_lock, flags);
 
 					if (rport->port_state == FC_PORTSTATE_ONLINE &&
 							rport->roles & FC_PORT_ROLE_NVME_TARGET) {
