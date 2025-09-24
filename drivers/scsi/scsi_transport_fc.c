@@ -912,6 +912,7 @@ fc_host_fpin_set_nvme_rport_marginal(struct Scsi_Host *shost, u32 fpin_len, char
 	u32 bytes_remain;
 	u32 dtag;
 	u8 i;
+	unsigned long flags;
 
 	/* Parse FPIN descriptors */
 	tlv = &fpin->fpin_desc[0];
@@ -933,13 +934,16 @@ fc_host_fpin_set_nvme_rport_marginal(struct Scsi_Host *shost, u32 fpin_len, char
 					wwpn = be64_to_cpu(li_desc->pname_list[i]);
 					if (wwpn != attached_wwpn) {
 						rport = fc_find_rport_by_wwpn(shost, wwpn);
-						if (rport && rport->port_state == FC_PORTSTATE_ONLINE &&
-						     rport->roles & FC_PORT_ROLE_NVME_TARGET) {
-							rport->port_state = FC_PORTSTATE_MARGINAL;
+						if (rport) {
+						       if (rport->port_state == FC_PORTSTATE_ONLINE &&
+							     rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+								rport->port_state = FC_PORTSTATE_MARGINAL;
+								spin_unlock_irqrestore(shost->host_lock, flags);
 #if (IS_ENABLED(CONFIG_NVME_FC))
-							nvme_fc_modify_rport_fpin_state(local_wwpn, wwpn, true);
+								nvme_fc_modify_rport_fpin_state(local_wwpn, wwpn, true);
 #endif
 							}
+						}
 					}
 				}
 			}
