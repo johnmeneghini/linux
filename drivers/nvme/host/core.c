@@ -3797,18 +3797,35 @@ static int nvme_subsys_check_duplicate_ids(struct nvme_subsystem *subsys,
 
 	lockdep_assert_held(&subsys->lock);
 
-	list_for_each_entry(h, &subsys->nsheads, entry) {
-		if (has_uuid && uuid_equal(&ids->uuid, &h->ids.uuid))
-			return -EINVAL;
-		if (has_nguid &&
-		    memcmp(&ids->nguid, &h->ids.nguid, sizeof(ids->nguid)) == 0)
-			return -EINVAL;
-		if (has_eui64 &&
-		    memcmp(&ids->eui64, &h->ids.eui64, sizeof(ids->eui64)) == 0)
-			return -EINVAL;
+	if (has_uuid) {
+		list_for_each_entry(h, &subsys->nsheads, entry)
+			if (uuid_equal(&ids->uuid, &h->ids.uuid)) {
+				memset(&ids->uuid, 0, sizeof(ids->uuid));
+				has_uuid = false;
+			}
 	}
 
-	return 0;
+	if (has_nguid) {
+		list_for_each_entry(h, &subsys->nsheads, entry)
+			if (memcmp(&ids->nguid,
+				   &h->ids.nguid,
+				   sizeof(ids->nguid)) == 0) {
+				memset(ids->nguid, 0, sizeof(ids->nguid));
+				has_nguid = false;
+			}
+	}
+
+	if (has_eui64) {
+		list_for_each_entry(h, &subsys->nsheads, entry)
+			if (memcmp(&ids->eui64,
+				   &h->ids.eui64,
+				   sizeof(ids->eui64)) == 0) {
+				memset(ids->eui64, 0, sizeof(ids->eui64));
+				has_eui64 = false;
+			}
+	}
+
+	return (has_uuid || has_nguid || has_eui64) ? 0 : -EINVAL;
 }
 
 static void nvme_cdev_rel(struct device *dev)
