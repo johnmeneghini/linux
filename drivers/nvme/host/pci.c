@@ -2497,6 +2497,15 @@ static ssize_t cmbsz_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(cmbsz);
 
+static ssize_t quirks_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct nvme_dev *ndev = to_nvme_dev(dev_get_drvdata(dev));
+
+	return sysfs_emit(buf, "0x%08lx\n", ndev->ctrl.quirks);
+}
+static DEVICE_ATTR_RO(quirks);
+
 static ssize_t hmb_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
@@ -2557,6 +2566,7 @@ static struct attribute *nvme_pci_attrs[] = {
 	&dev_attr_cmbloc.attr,
 	&dev_attr_cmbsz.attr,
 	&dev_attr_hmb.attr,
+	&dev_attr_quirks.attr,
 	NULL,
 };
 
