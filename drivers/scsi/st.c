@@ -3580,9 +3580,6 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 	if (retval)
 		goto out;
 
-	if (st_ioctl_bypass_flush(STp, cmd_in))
-		goto unlock;
-
 	cmd_type = _IOC_TYPE(cmd_in);
 	cmd_nr = _IOC_NR(cmd_in);
 
@@ -3797,6 +3794,9 @@ static long st_ioctl(struct file *file, unsigned int cmd_in, unsigned long arg)
 	}
 
 	cmd_mtiocget = cmd_type == _IOC_TYPE(MTIOCGET) && cmd_nr == _IOC_NR(MTIOCGET);
+
+	if (st_ioctl_bypass_flush(STp, cmd_in))
+		goto unlock;
 
 	if ((i = flush_buffer(STp, 0)) < 0) {
 		if (cmd_mtiocget && STp->pos_unknown) {
