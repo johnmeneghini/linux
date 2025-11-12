@@ -5369,8 +5369,9 @@ void nvme_unfreeze(struct nvme_ctrl *ctrl)
 }
 EXPORT_SYMBOL_GPL(nvme_unfreeze);
 
-int nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
+int nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl)
 {
+	unsigned long timeout = ctrl->io_timeout;
 	struct nvme_ns *ns;
 	int srcu_idx;
 
@@ -5378,7 +5379,7 @@ int nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
 	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
 				 srcu_read_lock_held(&ctrl->srcu)) {
 		timeout = blk_mq_freeze_queue_wait_timeout(ns->queue, timeout);
-		if (timeout <= 0)
+		if (!timeout)
 			break;
 	}
 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
