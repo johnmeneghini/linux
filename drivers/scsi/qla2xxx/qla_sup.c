@@ -10,6 +10,656 @@
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
 
+/**
+ * qla29xx_get_flash_manufacturer - Retrieve flash manufacturer and device IDs.
+ * @ha: Pointer to hardware data structure.
+ * @man_id: Pointer to store the manufacturer ID.
+ * @flash_id: Pointer to store the flash device ID.
+ *
+ * This function retrieves the manufacturer and device IDs of the flash memory.
+ * It first attempts to read the IDs from a specific flash configuration address.
+ * If the IDs are invalid, it uses an alternate method to extract the information.
+ */
+static void
+qla29xx_get_flash_manufacturer(struct qla_hw_data *ha, uint8_t *man_id,
+			       uint8_t *flash_id)
+{
+	*man_id = *flash_id = 0;
+
+	/* TBD: MPI need to provide this information */
+	return;
+}
+
+/**
+ * qla29xx_get_flt_layout - Retrieve the flash layout table (FLT) for QLA29xx.
+ * @vha: Pointer to SCSI QLogic host structure.
+ *
+ * This function reads and validates the FLT structure from the flash memory.
+ * It extracts region information and updates the hardware data structure.
+ */
+static void
+qla29xx_get_flt_layout(scsi_qla_host_t *vha)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct qla_flash_layout *flt_layout = ha->flt_data;
+	struct qla_flt_region_header *flt_header = &flt_layout->flt_header;
+	struct qla_flt_region_data *region = &flt_layout->region[0];
+	uint32_t flt_options = 0;
+	uint32_t flt_size;
+	uint32_t cnt, chksum;
+	uint16_t reg_cnt, i;
+	__le32 *wptr;
+	void *buf = NULL;
+
+	flt_size = sizeof(struct qla_flt_region_header);
+	wptr = (__force __le32 *)ha->flt_data;
+
+	buf = qla29xx_read_optrom_data(vha, FLT_REG_MINI_FLT, flt_options,
+				       ha->flt_data, 0, flt_size);
+	if (!buf) {
+		ql_log(ql_log_warn, vha, 0x007b,
+		    "Failed to read FLT information.\n");
+		goto exit_flt;
+	}
+
+	ql_dbg(ql_dbg_init + ql_dbg_buffer, vha, 0x0111,
+	       "Contents of Flash Layout (0x%x):\n", flt_size);
+	ql_dump_buffer(ql_dbg_init + ql_dbg_buffer, vha, 0x0112,
+		       ha->flt_data, flt_size);
+
+	/* check flt version checksum and other info */
+	if ((le32_to_cpu(*wptr) == 0xffff) &&
+	    flt_header->version != cpu_to_le32(FLT_HDR_VERSION)) {
+		ql_log(ql_log_warn, vha, 0x007c,
+		    "Unsupported FLT detected: version=0x%x length=0x%x signature=0x%x region_count=0x%x checksum=0x%x.\n",
+		    le32_to_cpu(flt_header->version),
+		    le32_to_cpu(flt_header->length),
+		    le32_to_cpu(flt_header->signature),
+		    le16_to_cpu(flt_header->region_count),
+		    le32_to_cpu(flt_header->checksum));
+		goto exit_flt;
+	}
+
+	reg_cnt = le16_to_cpu(flt_header->region_count);
+	if (reg_cnt > FLT_MAX_REGIONS)
+		goto exit_flt;
+
+	flt_size = sizeof(struct qla_flash_layout) +
+		   (reg_cnt * le16_to_cpu(flt_header->region_size));
+	buf = qla29xx_read_optrom_data(vha, FLT_REG_MINI_FLT, flt_options,
+				       ha->flt_data, 0, flt_size);
+	if (!buf) {
+		ql_log(ql_log_warn, vha, 0x007b,
+		    "Failed to read FLT information.\n");
+		goto exit_flt;
+	}
+
+	cnt =
+	(sizeof(*flt_layout) + le32_to_cpu(flt_header->length)) / sizeof(*wptr);
+	for (chksum = 0; cnt--; wptr++)
+		chksum += le32_to_cpu(*wptr);
+	if (chksum) {
+		ql_log(ql_log_fatal, vha, 0x007f,
+		    "Inconsistent FLT detected: version=0x%x length=0x%x signature=0x%x checksum=0x%x.\n",
+		    le32_to_cpu(flt_header->version),
+		    le32_to_cpu(flt_header->length),
+		    le32_to_cpu(flt_header->signature),
+		    le32_to_cpu(flt_header->checksum));
+		goto exit_flt;
+	}
+
+	ql_dbg(ql_dbg_init, vha, 0x007f,
+		"FLT detected: version=0x%08x length=0x%08x signature=0x%08x region_count=0x%04x region_len=0x%04x segment_len=0x%08x checksum=0x%08x.\n",
+		le32_to_cpu(flt_header->version),
+		le32_to_cpu(flt_header->length),
+		le32_to_cpu(flt_header->signature),
+		le16_to_cpu(flt_header->region_count),
+		le16_to_cpu(flt_header->region_size),
+		le32_to_cpu(flt_header->segment_size),
+		le32_to_cpu(flt_header->checksum));
+
+	for (i = 0; reg_cnt; i++, reg_cnt--) {
+		region = &flt_layout->region[i];
+		ql_dbg(ql_dbg_init, vha, 0x0080,
+		    "FLT[%03x]: len=0x%08x version=0x%08x attr=0x%02x.\n",
+		    le16_to_cpu(region->region_code),
+		    le32_to_cpu(region->image_length),
+		    le32_to_cpu(region->version),
+		    le32_to_cpu(region->attribute));
+		if (le16_to_cpu(region->region_code) == FLT_REG_FW_DUMP_TMPLT) {
+			ql_dbg(ql_dbg_init, vha, 0x0080,
+				"%s: %d: Found FW dump template", __func__, __LINE__);
+			ha->fw_dump_tmplt_len = le32_to_cpu(region->image_length);
+		}
+	}
+
+	ha->flt_segment_length = le32_to_cpu(flt_header->segment_size);
+	ha->flags.valid_flt = true;
+	return;
+
+exit_flt:
+	ha->flt_segment_length = QLA_SEGMENT_LENGTH;
+	return;
+}
+
+/**
+ * qla29xx_get_fdt_info - Retrieve flash descriptor table (FDT) information.
+ * @vha: Pointer to SCSI QLogic host structure.
+ *
+ * This function reads and validates the FDT structure from the flash memory.
+ * It extracts manufacturer and device-specific information and updates
+ * the hardware data structure.
+ */
+static void
+qla29xx_get_fdt_info(scsi_qla_host_t *vha)
+{
+#define FLASH_BLK_SIZE_4K	0x1000
+#define FLASH_BLK_SIZE_32K	0x8000
+#define FLASH_BLK_SIZE_64K	0x10000
+	const char *loc, *locations[] = { "MID", "FDT" };
+	struct qla_hw_data *ha = vha->hw;
+	struct req_que *req = ha->req_q_map[0];
+	uint16_t cnt, chksum;
+	__le16 *wptr = (__force __le16 *)req->ring;
+	struct qla_fdt_layout *fdt = (struct qla_fdt_layout *)req->ring;
+	uint8_t	man_id, flash_id;
+	uint16_t mid = 0, fid = 0;
+	uint32_t fdt_options = 0;
+	void *buf = NULL;
+
+	buf = qla29xx_read_optrom_data(vha, FLT_REG_FDT, fdt_options,
+					fdt, 0, sizeof(*fdt));
+	if (!buf) {
+		ql_log(ql_log_warn, vha, 0x0047,
+		    "Failed to read FLT information.\n");
+		goto no_flash_data;
+	}
+
+	if (le16_to_cpu(*wptr) == 0xffff)
+		goto no_flash_data;
+	if (memcmp(fdt->sig, "QLID", 4))
+		goto no_flash_data;
+
+	for (cnt = 0, chksum = 0; cnt < sizeof(*fdt) >> 1; cnt++, wptr++)
+		chksum += le16_to_cpu(*wptr);
+	if (chksum) {
+		ql_dbg(ql_dbg_init, vha, 0x004c,
+			"Inconsistent FDT detected: checksum=0x%x id=%c version0x%x.\n",
+			chksum, fdt->sig[0], le16_to_cpu(fdt->version));
+		ql_dump_buffer(ql_dbg_init + ql_dbg_buffer, vha, 0x0113,
+		    fdt, sizeof(*fdt));
+		goto no_flash_data;
+	}
+
+	/* TBD: Not sure if this information is still needed by application */
+	loc = locations[1];
+	mid = le16_to_cpu(fdt->man_id);
+	fid = le16_to_cpu(fdt->id);
+
+no_flash_data:
+	loc = locations[0];
+	qla29xx_get_flash_manufacturer(ha, &man_id, &flash_id);
+}
+
+/**
+ * qla29xx_get_flash_region - Retrieve flash region information for QLA29xx adapters.
+ * @vha: Pointer to SCSI QLogic host structure.
+ * @code: Region code to identify the flash region.
+ * @region: Pointer to store the retrieved flash region information.
+ *
+ * This function retrieves the flash region information for QLA29xx adapters
+ * based on the specified region code.
+ *
+ * Returns QLA_SUCCESS on success or QLA_FUNCTION_FAILED on failure.
+ */
+static int
+qla29xx_get_flash_region(struct scsi_qla_host *vha, uint32_t code,
+    struct qla_flt_region_data *region)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct qla_flash_layout *flt = ha->flt_data;
+	struct qla_flt_region_header *flt_hdr = &flt->flt_header;
+	struct qla_flt_region_data *flt_reg = &flt->region[0];
+	uint16_t cnt;
+	int rval = QLA_FUNCTION_FAILED;
+
+	if (!ha->flt_data)
+		return QLA_FUNCTION_FAILED;
+
+	cnt = le16_to_cpu(flt_hdr->region_count);
+	for (; cnt; cnt--, flt_reg++) {
+		if (le32_to_cpu(flt_reg->region_code) == code) {
+			memcpy((uint8_t *)region, flt_reg,
+			    sizeof(struct qla_flt_region_data));
+			rval = QLA_SUCCESS;
+			break;
+		}
+	}
+
+	return rval;
+}
+
+/**
+ * set_segment_bits - Set segment-related bits in the options field.
+ * @options: Pointer to the options field.
+ * @segment_index: Index of the current segment.
+ * @total: Total number of segments.
+ *
+ * This function sets the appropriate bits in the options field to indicate
+ * whether the current segment is the first, last, or a single segment.
+ */
+static void set_segment_bits(uint16_t *options, int segment_index, int total)
+{
+	/* - Single segment complete image.
+	 * - 1st Segment of an image.
+	 * - Last segment of an image.
+	 */
+	if (total == 1)
+		*options |= (1 << 10) | (1 << 11);
+	else if (segment_index == 0)
+		*options |= (1 << 10);
+	else if (segment_index == total - 1)
+		*options |= (1 << 11);
+}
+
+/**
+ * set_chunk_bits - Set chunk-related bits in the options field.
+ * @options: Pointer to the options field.
+ * @count: Index of the current chunk.
+ * @total: Total number of chunks.
+ *
+ * This function sets the appropriate bits in the options field to indicate
+ * whether the current chunk is the first, last, or a single chunk.
+ */
+static void set_chunk_bits(uint16_t *options, int count, int total)
+{
+	/* - Single chunk complete segment
+	 * - 1st chunk of a segment
+	 * - Last chunk of a segment
+	 */
+	if (total == 1)
+		*options |= (1 << 4) | (1 << 5);
+	else if (count == 0)
+		*options |= (1 << 4);
+	else if (count == total - 1)
+		*options |= (1 << 5);
+}
+
+/**
+ * qla29xx_write_optrom_data - Write data to the optrom for QLA29xx adapters.
+ * @vha: Pointer to SCSI QLogic host structure.
+ * @reg_code: Region code to write to.
+ * @opts: Options for the write operation.
+ * @buf: Buffer containing the data to write.
+ * @offset: Offset within the region to start writing.
+ * @length: Length of data to write.
+ *
+ * This function writes data to the specified optrom region for QLA29xx adapters.
+ *
+ * Returns 0 on success or a negative error code on failure.
+ */
+int
+qla29xx_write_optrom_data(struct scsi_qla_host *vha, uint16_t reg_code,
+			 uint16_t opts, void *buf, uint32_t offset,
+			 uint32_t length)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct qla_flt_region_data region;
+	dma_addr_t optrom_dma;
+	uint32_t faddr, left, burst;
+	uint32_t img_len, seg_dlen;
+	uint32_t region_len, region_dlen;
+	void *optrom;
+	uint8_t *pbuf;
+	int rval = -EINVAL;
+	uint16_t total_segments, segment_index = 0;
+	uint16_t chunk_index = 0, chunk_count = 0;
+
+	memset(&region, 0, sizeof(region));
+
+	optrom = dma_alloc_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE,
+				    &optrom_dma, GFP_KERNEL);
+	if (!optrom) {
+		ql_log(ql_log_warn, vha, 0x0090,
+		    "Unable to allocate memory for optrom burst read (%x KB).\n",
+		    OPTROM_BURST_SIZE / 1024);
+		return -ENOMEM;
+	}
+
+	if (ha->flags.valid_flt && length == 0) {
+		/* Get image length and segment length from FLT */
+		rval = qla29xx_get_flash_region(vha, reg_code, &region);
+		if (rval != QLA_SUCCESS) {
+			ql_log(ql_log_warn, vha, 0x0092,
+				"Invalid address %x - not a region start address\n",
+				reg_code);
+			goto free_buf;
+		}
+		img_len = le32_to_cpu(region.image_length);
+	} else {
+		img_len = length;
+	}
+
+	seg_dlen = le32_to_cpu(ha->flt_segment_length) >> 2;
+	region_len = (length > 0) ? length : img_len;
+	region_dlen = (region_len >> 2);
+	total_segments = (region_dlen + seg_dlen - 1) / seg_dlen;
+
+	faddr = offset >> 2;
+	left = region_dlen;
+	burst = OPTROM_BURST_DWORDS;
+	pbuf = buf;
+
+	while (region_dlen > 0) {
+		uint32_t segment_size, total_chunks;
+		uint16_t options = 0;
+
+		segment_size = (region_dlen > seg_dlen) ? seg_dlen : region_dlen;
+		total_chunks = (segment_size + burst - 1) / burst;
+
+		if (burst > left)
+			burst = left;
+
+		set_segment_bits(&options, segment_index, total_segments);
+		set_chunk_bits(&options, chunk_index, total_chunks);
+
+		/* flash block write operations */
+		SET_FW_BIT(options, BIT_6);
+		CLEAR_FW_BIT(options, BIT_9);
+
+		check_and_set_mbc_bits(opts, options, BIT_15, BIT_15);
+		check_and_set_mbc_bits(opts, options, BIT_7, BIT_7);
+
+		if (segment_index == total_segments -1 &&
+		    chunk_index == total_chunks - 1)
+			check_and_set_mbc_bits(opts, options, BIT_8, BIT_8);
+
+		memcpy(optrom, pbuf, burst * 4);
+
+		/* faddr is offset relative to region code */
+		rval = qla29xx_flash_block_write(vha, optrom_dma,
+				faddr, burst, reg_code, options);
+		if (rval) {
+			ql_log(ql_log_warn, vha, 0x0095,
+			    "Unable to burst-read optrom segment (%x/%x/%llx).\n",
+			    rval, faddr, (unsigned long long)optrom_dma);
+
+			dma_free_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE,
+			    optrom, optrom_dma);
+			goto exit_write;
+		}
+
+		left -= burst;
+		faddr += burst;
+		pbuf += burst * 4;
+		chunk_index++;
+		chunk_count++;
+		if (chunk_index >= total_chunks) {
+			chunk_index = 0;
+			segment_index++;
+			region_dlen -= segment_size;
+		}
+	}
+
+free_buf:
+	dma_free_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE, optrom,
+	    optrom_dma);
+	return rval;
+
+exit_write:
+	return rval;
+}
+
+/**
+ * qla29xx_read_optrom_data - Read data from the optrom for QLA29xx adapters.
+ * @vha: Pointer to SCSI QLogic host structure.
+ * @reg_code: Region code to read from.
+ * @opts: Options for the read operation.
+ * @buf: Buffer to store the read data.
+ * @offset: Offset within the region to start reading.
+ * @length: Length of data to read.
+ *
+ * This function reads data from the specified optrom region for QLA29xx adapters.
+ *
+ * Returns a pointer to the buffer on success or NULL on failure.
+ */
+void *
+qla29xx_read_optrom_data(struct scsi_qla_host *vha, uint16_t reg_code,
+			 uint16_t opts, void *buf, uint32_t offset,
+			 uint32_t length)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct qla_flt_region_data region;
+	dma_addr_t optrom_dma;
+	uint32_t faddr, left, burst;
+	uint32_t img_len, seg_dlen;
+	uint32_t region_len, region_dlen;
+	void *optrom;
+	uint8_t *pbuf;
+	uint16_t total_segments, segment_index = 0;
+	uint16_t chunk_index = 0, chunk_count = 0;
+	int rval;
+
+	memset(&region, 0, sizeof(region));
+
+	optrom = dma_alloc_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE,
+				    &optrom_dma, GFP_KERNEL);
+	if (!optrom) {
+		ql_log(ql_log_warn, vha, 0x0093,
+		    "Unable to allocate memory for optrom burst read (%x KB).\n",
+		    OPTROM_BURST_SIZE / 1024);
+		return NULL;
+	}
+
+	if (ha->flags.valid_flt && length == 0) {
+		/* Get image length and segment length from FLT */
+		rval = qla29xx_get_flash_region(vha, reg_code, &region);
+		if (rval != QLA_SUCCESS) {
+			ql_log(ql_log_warn, vha, 0x7033,
+				"Invalid address %x - not a region start address\n",
+				reg_code);
+			goto free_buf;
+		}
+		img_len = le32_to_cpu(region.image_length);
+	} else {
+		img_len = length;
+	}
+
+	seg_dlen = le32_to_cpu(ha->flt_segment_length) >> 2;
+	region_len = (length > 0) ? length : img_len;
+	region_dlen = (region_len >> 2);
+	total_segments = (region_dlen + seg_dlen - 1) / seg_dlen;
+
+	faddr = offset;
+	left = region_dlen;
+	burst = OPTROM_BURST_DWORDS;
+	pbuf = buf;
+
+	ql_log(ql_log_info, vha, 0x0096,
+	       "Reg[0x%x]: options=0x%x length=0x%x offset=0x%x segments=%u\n",
+		reg_code, opts, region_len, offset, total_segments);
+
+	while (region_dlen > 0) {
+		uint32_t segment_size, total_chunks;
+		uint16_t options = 0;
+
+		segment_size = (region_dlen > seg_dlen) ? seg_dlen : region_dlen;
+		total_chunks = (segment_size + burst - 1) / burst;
+
+		if (burst > left)
+			burst = left;
+
+		set_segment_bits(&options, segment_index, total_segments);
+		set_chunk_bits(&options, chunk_index, total_chunks);
+
+		/* flash block read operations */
+		CLEAR_FW_BIT(options, BIT_9);
+		CLEAR_FW_BIT(options, BIT_6);
+
+		options |= opts;
+
+		/* faddr is offset relative to region code */
+		rval = qla29xx_flash_block_read(vha, optrom_dma,
+				faddr, burst, reg_code, options);
+		if (rval) {
+			ql_log(ql_log_warn, vha, 0x0097,
+			    "Unable to burst-read optrom segment (%x/%x/%llx).\n",
+			    rval, faddr, (unsigned long long)optrom_dma);
+			goto free_buf;
+		}
+
+		memcpy(pbuf, optrom, burst * 4);
+
+		left -= burst;
+		faddr += burst;
+		pbuf += burst * 4;
+		chunk_index++;
+		chunk_count++;
+		if (chunk_index >= total_chunks) {
+			chunk_index = 0;
+			segment_index++;
+			region_dlen -= segment_size;
+		}
+	}
+
+	dma_free_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE, optrom,
+	    optrom_dma);
+	return buf;
+
+free_buf:
+	dma_free_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE, optrom,
+	    optrom_dma);
+	return NULL;
+}
+
+/**
+ * qla29xx_get_flash_version - Retrieve flash version information for QLA29xx adapters.
+ * @vha: Pointer to SCSI QLogic host structure.
+ * @mbuf: Buffer to store the flash version information.
+ *
+ * This function retrieves the flash version information for QLA29xx adapters.
+ * It initializes the version fields and prepares for future flash read logic.
+ *
+ * Returns QLA_SUCCESS on success or QLA_FUNCTION_FAILED on failure.
+ */
+int
+qla29xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct qla_flt_region_data region;
+	uint32_t pcihdr = 0, pcids = 0;
+	uint32_t *dcode = mbuf;
+	uint8_t *bcode = mbuf;
+	uint8_t code_type, last_image;
+	void *buf = NULL;
+	int ret = QLA_SUCCESS;
+
+	if (!mbuf)
+		return QLA_FUNCTION_FAILED;
+
+	memset(ha->bios_revision, 0, sizeof(ha->bios_revision));
+	memset(ha->efi_revision, 0, sizeof(ha->efi_revision));
+	memset(ha->fcode_revision, 0, sizeof(ha->fcode_revision));
+	memset(ha->fw_revision, 0, sizeof(ha->fw_revision));
+
+	ret = qla29xx_get_flash_region(vha, FLT_REG_FW, &region);
+	if (ret != QLA_SUCCESS) {
+		ql_log(ql_log_warn, vha, 0x7033,
+			"Invalid region %x\n", FLT_REG_FW);
+		goto exit_boot;
+	}
+
+	ha->fw_revision[0] = (region.version >> 16) & 0xff;
+	ha->fw_revision[1] = (region.version >> 8) & 0xff;
+	ha->fw_revision[2] = region.version & 0xff;
+
+	do {
+		/* Verify PCI expansion ROM header. */
+		buf = qla29xx_read_optrom_data(vha, FLT_REG_BOOT_CODE, 0,
+					       dcode, 0, 0x20);
+		if (!buf) {
+			ret = QLA_FUNCTION_FAILED;
+			ql_log(ql_log_info, vha, 0x017d,
+			    "Unable to read PCI EXP Rom Header(%x).\n", ret);
+			break;
+		}
+
+		bcode = mbuf + (pcihdr % 4);
+		if (memcmp(bcode, "\x55\xaa", 2)) {
+			/* No signature */
+			ql_log(ql_log_fatal, vha, 0x0059,
+			    "No matching ROM signature.\n");
+			ret = QLA_FUNCTION_FAILED;
+			break;
+		}
+
+		/* Locate PCI data structure. */
+		pcids = pcihdr + ((bcode[0x19] << 8) | bcode[0x18]);
+
+		buf = qla29xx_read_optrom_data(vha, FLT_REG_BOOT_CODE, 0,
+					       dcode, pcids, 0x20);
+		if (!buf) {
+			ret = QLA_FUNCTION_FAILED;
+			ql_log(ql_log_info, vha, 0x018e,
+			    "Unable to read PCI Data Structure (%x).\n", ret);
+			break;
+		}
+
+		bcode = mbuf + (pcihdr % 4);
+		/* Validate signature of PCI data structure. */
+		if (memcmp(bcode, "PCIR", 4)) {
+			/* Incorrect header. */
+			ql_log(ql_log_fatal, vha, 0x005a,
+			    "PCI data struct not found pcir_adr=%x.\n", pcids);
+			ql_dump_buffer(ql_dbg_init, vha, 0x0059, dcode, 32);
+			ret = QLA_FUNCTION_FAILED;
+			break;
+		}
+
+		/* Read version */
+		code_type = bcode[0x14];
+		switch (code_type) {
+		case ROM_CODE_TYPE_BIOS:
+			/* Intel x86, PC-AT compatible. */
+			ha->bios_revision[0] = bcode[0x12];
+			ha->bios_revision[1] = bcode[0x13];
+			ql_dbg(ql_dbg_init, vha, 0x005b,
+			    "Read BIOS %d.%d.\n",
+			    ha->bios_revision[1], ha->bios_revision[0]);
+			break;
+		case ROM_CODE_TYPE_FCODE:
+			/* Open Firmware standard for PCI (FCode). */
+			ha->fcode_revision[0] = bcode[0x12];
+			ha->fcode_revision[1] = bcode[0x13];
+			ql_dbg(ql_dbg_init, vha, 0x005c,
+			    "Read FCODE %d.%d.\n",
+			    ha->fcode_revision[1], ha->fcode_revision[0]);
+			break;
+		case ROM_CODE_TYPE_EFI:
+			/* Extensible Firmware Interface (EFI). */
+			ha->efi_revision[0] = bcode[0x12];
+			ha->efi_revision[1] = bcode[0x13];
+			ql_dbg(ql_dbg_init, vha, 0x005d,
+			    "Read EFI %d.%d.\n",
+			    ha->efi_revision[1], ha->efi_revision[0]);
+			break;
+		default:
+			ql_log(ql_log_warn, vha, 0x005e,
+			    "Unrecognized code type %x at pcids %x.\n",
+			    code_type, pcids);
+			break;
+		}
+
+		last_image = bcode[0x15] & BIT_7;
+
+		/* Locate next PCI expansion ROM. */
+		pcihdr += ((bcode[0x11] << 8) | bcode[0x10]) * 512;
+	} while (!last_image);
+
+exit_boot:
+	return ret;
+}
+
 /*
  * NVRAM support routines
  */
@@ -1117,10 +1767,16 @@ qla2xxx_get_flash_info(scsi_qla_host_t *vha)
 	uint32_t flt_addr;
 	struct qla_hw_data *ha = vha->hw;
 
-	if (!IS_QLA24XX_TYPE(ha) && !IS_QLA25XX(ha) &&
-	    !IS_CNA_CAPABLE(ha) && !IS_QLA2031(ha) &&
-	    !IS_QLA27XX(ha) && !IS_QLA28XX(ha))
-		return QLA_SUCCESS;
+	if (!IS_QLA24XX_TYPE(ha) && !IS_QLA25XX(ha) && !IS_CNA_CAPABLE(ha) &&
+	    !IS_QLA2031(ha) && !IS_QLA27XX(ha) && !IS_QLA28XX(ha) &&
+	    !IS_QLA29XX(ha))
+		goto done;
+
+	if (IS_QLA29XX(ha)) {
+		qla29xx_get_flt_layout(vha);
+		qla29xx_get_fdt_info(vha);
+		goto done;
+	}
 
 	if (IS_QLA28XX(ha) && !qla28xx_validate_mcu_signature(vha))
 		ha->flags.secure_mcu = 1;
@@ -1132,7 +1788,7 @@ qla2xxx_get_flash_info(scsi_qla_host_t *vha)
 	qla2xxx_get_flt_info(vha, flt_addr);
 	qla2xxx_get_fdt_info(vha);
 	qla2xxx_get_idc_param(vha);
-
+done:
 	return QLA_SUCCESS;
 }
 
