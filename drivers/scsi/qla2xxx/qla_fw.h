@@ -2378,4 +2378,40 @@ struct qla_flash_memo_block {
 	struct qla_fmb_version  tool_version;
 };
 
+#define TIM_DEST_ADDR	0xffffffff
+#define CHUNK_SIZE	0x10000
+
+#define TIM	0
+#define ARR1	1
+#define ARR2	2
+#define ARR3	3
+#define ARR4	4
+
+#define LD_FL_HEADER_SIGNATURE	0x46434F50
+#define LD_FL_HEADER_VERSION	0x01
+#define LD_FL_HEADER_SIZE	(0x14 * 4)
+
+struct fcop_header {
+	__u32 signature;
+	__u32 header_length;
+	__u32 header_version;
+	__u32 segment_size;
+	__u32 tim_length;
+	__u32 fc_major_version;
+	__u32 fc_minor_version;
+	__u32 fc_subminor_version;
+	__u32 array1_length;
+	__u32 array1_destination_addr;
+	__u32 array2_length;
+	__u32 array2_destination_addr;
+	__u32 array3_length;
+	__u32 array4_length;
+	__u32 attribute;
+	__u32 extended_attribute;
+	__u32 reserved0;
+	__u32 reserved1;
+	__u32 reserved2;
+	__u32 image_checksum;
+};
+
 #endif
