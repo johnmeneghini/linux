@@ -532,134 +532,6 @@ free_buf:
 	return NULL;
 }
 
-/**
- * qla29xx_get_flash_version - Retrieve flash version information for QLA29xx adapters.
- * @vha: Pointer to SCSI QLogic host structure.
- * @mbuf: Buffer to store the flash version information.
- *
- * This function retrieves the flash version information for QLA29xx adapters.
- * It initializes the version fields and prepares for future flash read logic.
- *
- * Returns QLA_SUCCESS on success or QLA_FUNCTION_FAILED on failure.
- */
-int
-qla29xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
-{
-	struct qla_hw_data *ha = vha->hw;
-	struct qla_flt_region_data region;
-	uint32_t pcihdr = 0, pcids = 0;
-	uint32_t *dcode = mbuf;
-	uint8_t *bcode = mbuf;
-	uint8_t code_type, last_image;
-	void *buf = NULL;
-	int ret = QLA_SUCCESS;
-
-	if (!mbuf)
-		return QLA_FUNCTION_FAILED;
-
-	memset(ha->bios_revision, 0, sizeof(ha->bios_revision));
-	memset(ha->efi_revision, 0, sizeof(ha->efi_revision));
-	memset(ha->fcode_revision, 0, sizeof(ha->fcode_revision));
-	memset(ha->fw_revision, 0, sizeof(ha->fw_revision));
-
-	ret = qla29xx_get_flash_region(vha, FLT_REG_FW, &region);
-	if (ret != QLA_SUCCESS) {
-		ql_log(ql_log_warn, vha, 0x7033,
-			"Invalid region %x\n", FLT_REG_FW);
-		goto exit_boot;
-	}
-
-	ha->fw_revision[0] = (region.version >> 16) & 0xff;
-	ha->fw_revision[1] = (region.version >> 8) & 0xff;
-	ha->fw_revision[2] = region.version & 0xff;
-
-	do {
-		/* Verify PCI expansion ROM header. */
-		buf = qla29xx_read_optrom_data(vha, FLT_REG_BOOT_CODE, 0,
-					       dcode, 0, 0x20);
-		if (!buf) {
-			ret = QLA_FUNCTION_FAILED;
-			ql_log(ql_log_info, vha, 0x017d,
-			    "Unable to read PCI EXP Rom Header(%x).\n", ret);
-			break;
-		}
-
-		bcode = mbuf + (pcihdr % 4);
-		if (memcmp(bcode, "\x55\xaa", 2)) {
-			/* No signature */
-			ql_log(ql_log_fatal, vha, 0x0059,
-			    "No matching ROM signature.\n");
-			ret = QLA_FUNCTION_FAILED;
-			break;
-		}
-
-		/* Locate PCI data structure. */
-		pcids = pcihdr + ((bcode[0x19] << 8) | bcode[0x18]);
-
-		buf = qla29xx_read_optrom_data(vha, FLT_REG_BOOT_CODE, 0,
-					       dcode, pcids, 0x20);
-		if (!buf) {
-			ret = QLA_FUNCTION_FAILED;
-			ql_log(ql_log_info, vha, 0x018e,
-			    "Unable to read PCI Data Structure (%x).\n", ret);
-			break;
-		}
-
-		bcode = mbuf + (pcihdr % 4);
-		/* Validate signature of PCI data structure. */
-		if (memcmp(bcode, "PCIR", 4)) {
-			/* Incorrect header. */
-			ql_log(ql_log_fatal, vha, 0x005a,
-			    "PCI data struct not found pcir_adr=%x.\n", pcids);
-			ql_dump_buffer(ql_dbg_init, vha, 0x0059, dcode, 32);
-			ret = QLA_FUNCTION_FAILED;
-			break;
-		}
-
-		/* Read version */
-		code_type = bcode[0x14];
-		switch (code_type) {
-		case ROM_CODE_TYPE_BIOS:
-			/* Intel x86, PC-AT compatible. */
-			ha->bios_revision[0] = bcode[0x12];
-			ha->bios_revision[1] = bcode[0x13];
-			ql_dbg(ql_dbg_init, vha, 0x005b,
-			    "Read BIOS %d.%d.\n",
-			    ha->bios_revision[1], ha->bios_revision[0]);
-			break;
-		case ROM_CODE_TYPE_FCODE:
-			/* Open Firmware standard for PCI (FCode). */
-			ha->fcode_revision[0] = bcode[0x12];
-			ha->fcode_revision[1] = bcode[0x13];
-			ql_dbg(ql_dbg_init, vha, 0x005c,
-			    "Read FCODE %d.%d.\n",
-			    ha->fcode_revision[1], ha->fcode_revision[0]);
-			break;
-		case ROM_CODE_TYPE_EFI:
-			/* Extensible Firmware Interface (EFI). */
-			ha->efi_revision[0] = bcode[0x12];
-			ha->efi_revision[1] = bcode[0x13];
-			ql_dbg(ql_dbg_init, vha, 0x005d,
-			    "Read EFI %d.%d.\n",
-			    ha->efi_revision[1], ha->efi_revision[0]);
-			break;
-		default:
-			ql_log(ql_log_warn, vha, 0x005e,
-			    "Unrecognized code type %x at pcids %x.\n",
-			    code_type, pcids);
-			break;
-		}
-
-		last_image = bcode[0x15] & BIT_7;
-
-		/* Locate next PCI expansion ROM. */
-		pcihdr += ((bcode[0x11] << 8) | bcode[0x10]) * 512;
-	} while (!last_image);
-
-exit_boot:
-	return ret;
-}
-
 /*
  * NVRAM support routines
  */
@@ -4104,6 +3976,34 @@ qla82xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
 	return ret;
 }
 
+/*
+ * Read a PCI-expansion-ROM-sized chunk (typically 0x20 bytes) into @buf.
+ *
+ * 29xx posts the read to FLT_REG_BOOT_CODE via qla29xx_read_optrom_data()
+ * using a byte offset relative to the region; failure is signalled by a
+ * NULL return. 24xx uses qla24xx_read_flash_data() with a dword address
+ * (caller-supplied byte address >> 2) and returns an int. The two paths
+ * are collapsed here so that qla24xx_get_flash_version() can issue the
+ * read as a single straight-line call instead of an inline if/else twin
+ * block at every read site.
+ *
+ * The 29xx byte offset and the 24xx byte address are taken as separate
+ * parameters to preserve the original callsite behavior verbatim (the
+ * first read site uses byte offset 0 on 29xx vs pcihdr on 24xx).
+ */
+static int
+qla24xx_read_pci_rom_chunk(scsi_qla_host_t *vha, uint32_t *buf,
+	uint32_t b29_off, uint32_t b24_byte_addr, uint32_t length)
+{
+	struct qla_hw_data *ha = vha->hw;
+
+	if (IS_QLA29XX(ha))
+		return qla29xx_read_optrom_data(vha, FLT_REG_BOOT_CODE, 0,
+		    buf, b29_off, length) ? QLA_SUCCESS : QLA_FUNCTION_FAILED;
+	return qla24xx_read_flash_data(vha, buf,
+	    b24_byte_addr >> 2, length >> 2);
+}
+
 int
 qla24xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
 {
@@ -4128,21 +4028,38 @@ qla24xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
 	memset(ha->fcode_revision, 0, sizeof(ha->fcode_revision));
 	memset(ha->fw_revision, 0, sizeof(ha->fw_revision));
 
-	pcihdr = ha->flt_region_boot << 2;
-	if (IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
-		qla27xx_get_active_image(vha, &active_regions);
-		if (active_regions.global == QLA27XX_SECONDARY_IMAGE) {
-			pcihdr = ha->flt_region_boot_sec << 2;
+	/* ISP29xx: get FW version from FLT region metadata */
+	if (IS_QLA29XX(ha)) {
+		struct qla_flt_region_data region;
+
+		ret = qla29xx_get_flash_region(vha, FLT_REG_FW, &region);
+		if (ret != QLA_SUCCESS) {
+			ql_log(ql_log_warn, vha, 0x7033,
+					"Invalid region %x\n", FLT_REG_FW);
+			return ret;
+		}
+
+		ha->fw_revision[0] = (region.version >> 16) & 0xff;
+		ha->fw_revision[1] = (region.version >> 8) & 0xff;
+		ha->fw_revision[2] = region.version & 0xff;
+	} else {
+		pcihdr = ha->flt_region_boot << 2;
+		if (IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
+			qla27xx_get_active_image(vha, &active_regions);
+			if (active_regions.global == QLA27XX_SECONDARY_IMAGE) {
+				pcihdr = ha->flt_region_boot_sec << 2;
+			}
 		}
 	}
 
 	do {
 		/* Verify PCI expansion ROM header. */
-		ret = qla24xx_read_flash_data(vha, dcode, pcihdr >> 2, 0x20);
+		ret = qla24xx_read_pci_rom_chunk(vha, dcode,
+		    /* b29_off */ 0, /* b24_byte_addr */ pcihdr, 0x20);
 		if (ret) {
 			ql_log(ql_log_info, vha, 0x017d,
 			    "Unable to read PCI EXP Rom Header(%x).\n", ret);
-			return QLA_FUNCTION_FAILED;
+			break;
 		}
 
 		bcode = mbuf + (pcihdr % 4);
@@ -4156,11 +4073,12 @@ qla24xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
 		/* Locate PCI data structure. */
 		pcids = pcihdr + ((bcode[0x19] << 8) | bcode[0x18]);
 
-		ret = qla24xx_read_flash_data(vha, dcode, pcids >> 2, 0x20);
+		ret = qla24xx_read_pci_rom_chunk(vha, dcode,
+		    /* b29_off */ pcids, /* b24_byte_addr */ pcids, 0x20);
 		if (ret) {
 			ql_log(ql_log_info, vha, 0x018e,
 			    "Unable to read PCI Data Structure (%x).\n", ret);
-			return QLA_FUNCTION_FAILED;
+			break;
 		}
 
 		bcode = mbuf + (pcihdr % 4);
@@ -4213,6 +4131,10 @@ qla24xx_get_flash_version(scsi_qla_host_t *vha, void *mbuf)
 		/* Locate next PCI expansion ROM. */
 		pcihdr += ((bcode[0x11] << 8) | bcode[0x10]) * 512;
 	} while (!last_image);
+
+	/* ISP29xx already obtained FW version from FLT region above */
+	if (IS_QLA29XX(ha))
+		return ret;
 
 	/* Read firmware image information. */
 	memset(ha->fw_revision, 0, sizeof(ha->fw_revision));
