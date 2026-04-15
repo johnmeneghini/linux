@@ -74,12 +74,15 @@ struct nvme_rdma_request {
 	struct nvme_rdma_sgl	data_sgl;
 	struct nvme_rdma_sgl	*metadata_sgl;
 	bool			use_sig_mr;
+	bool			aborted;
 };
 
 enum nvme_rdma_queue_flags {
 	NVME_RDMA_Q_ALLOCATED		= 0,
 	NVME_RDMA_Q_LIVE		= 1,
 	NVME_RDMA_Q_TR_READY		= 2,
+	NVME_RDMA_Q_CANCEL_ONE		= 3,
+	NVME_RDMA_Q_CANCEL_ALL		= 4,
 };
 
 struct nvme_rdma_queue {
@@ -106,6 +109,7 @@ struct nvme_rdma_ctrl {
 
 	/* other member variables */
 	struct blk_mq_tag_set	tag_set;
+	struct work_struct	fencing_work;
 	struct work_struct	err_work;
 
 	struct nvme_rdma_qe	async_event_sqe;
@@ -619,6 +623,8 @@ static int nvme_rdma_alloc_queue(struct nvme_rdma_ctrl *ctrl,
 	}
 
 	set_bit(NVME_RDMA_Q_ALLOCATED, &queue->flags);
+	clear_bit(NVME_RDMA_Q_CANCEL_ONE, &queue->flags);
+	clear_bit(NVME_RDMA_Q_CANCEL_ALL, &queue->flags);
 
 	return 0;
 
@@ -888,7 +894,7 @@ static int nvme_rdma_configure_io_queues(struct nvme_rdma_ctrl *ctrl, bool new)
 	if (!new) {
 		nvme_start_freeze(&ctrl->ctrl);
 		nvme_unquiesce_io_queues(&ctrl->ctrl);
-		if (!nvme_wait_freeze_timeout(&ctrl->ctrl, NVME_IO_TIMEOUT)) {
+		if (!nvme_wait_freeze_timeout(&ctrl->ctrl)) {
 			/*
 			 * If we timed out waiting for freeze we are likely to
 			 * be stuck.  Fail the controller initialization just
@@ -1120,11 +1126,28 @@ requeue:
 	nvme_rdma_reconnect_or_remove(ctrl, ret);
 }
 
+static void nvme_rdma_fencing_work(struct work_struct *work)
+{
+	struct nvme_rdma_ctrl *rdma_ctrl = container_of(work,
+			struct nvme_rdma_ctrl, fencing_work);
+	struct nvme_ctrl *ctrl = &rdma_ctrl->ctrl;
+	int ret;
+
+	ret = nvme_fence_ctrl(ctrl);
+	if (ret)
+		dev_info(ctrl->device, "CCR failed with error %d\n", ret);
+
+	nvme_change_ctrl_state(ctrl, NVME_CTRL_FENCED);
+	if (nvme_change_ctrl_state(ctrl, NVME_CTRL_RESETTING))
+		queue_work(nvme_reset_wq, &rdma_ctrl->err_work);
+}
+
 static void nvme_rdma_error_recovery_work(struct work_struct *work)
 {
 	struct nvme_rdma_ctrl *ctrl = container_of(work,
 			struct nvme_rdma_ctrl, err_work);
 
+	flush_work(&ctrl->fencing_work);
 	nvme_stop_keep_alive(&ctrl->ctrl);
 	flush_work(&ctrl->ctrl.async_event_work);
 	nvme_rdma_teardown_io_queues(ctrl, false);
@@ -1147,6 +1170,12 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 
 static void nvme_rdma_error_recovery(struct nvme_rdma_ctrl *ctrl)
 {
+	if (nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_FENCING)) {
+		dev_warn(ctrl->ctrl.device, "starting controller fencing\n");
+		queue_work(nvme_wq, &ctrl->fencing_work);
+		return;
+	}
+
 	if (!nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_RESETTING))
 		return;
 
@@ -1954,16 +1983,20 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 {
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	struct nvme_rdma_queue *queue = req->queue;
-	struct nvme_rdma_ctrl *ctrl = queue->ctrl;
+	struct nvme_rdma_ctrl *rdma_ctrl = queue->ctrl;
+	struct nvme_ctrl *ctrl = &rdma_ctrl->ctrl;
 	struct nvme_command *cmd = req->req.cmd;
 	int qid = nvme_rdma_queue_idx(queue);
+	int error, action;
+	enum nvme_ctrl_state state;
 
-	dev_warn(ctrl->ctrl.device,
+	dev_warn(ctrl->device,
 		 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout\n",
 		 rq->tag, nvme_cid(rq), cmd->common.opcode,
 		 nvme_fabrics_opcode_str(qid, cmd), qid);
 
-	if (nvme_ctrl_state(&ctrl->ctrl) != NVME_CTRL_LIVE) {
+	state = nvme_ctrl_state(ctrl);
+	if (state != NVME_CTRL_LIVE && state != NVME_CTRL_FENCING) {
 		/*
 		 * If we are resetting, connecting or deleting we should
 		 * complete immediately because we may block controller
@@ -1981,11 +2014,50 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 		return BLK_EH_DONE;
 	}
 
+	if (!req->aborted) {
+		if (!qid)
+			goto err_recovery;
+
+		if (!nvme_io_command_supported(ctrl, nvme_cmd_cancel)) {
+			error = nvme_submit_abort_req(ctrl, rq, qid);
+			if (error) {
+				if (error == -EBUSY)
+					return BLK_EH_RESET_TIMER;
+				goto err_recovery;
+			}
+			goto abort;
+		}
+
+		if (!test_and_set_bit(NVME_RDMA_Q_CANCEL_ONE, &queue->flags)) {
+			action = NVME_CANCEL_ACTION_SINGLE_CMD;
+		} else if (!test_and_set_bit(NVME_RDMA_Q_CANCEL_ALL,
+						&queue->flags)) {
+			action = NVME_CANCEL_ACTION_MUL_CMD;
+		} else {
+			/* No free reserved commands.
+			 * this means a "multiple commands" cancel
+			 * is currently under execution and this request
+			 * is likely to be canceled. Mark this
+			 * request as aborted and reset the timer.
+			 */
+			goto abort;
+		}
+
+		error = nvme_submit_cancel_req(ctrl, rq, qid, action);
+		if (error)
+			goto err_recovery;
+
+abort:
+		req->aborted = true;
+		return BLK_EH_RESET_TIMER;
+	}
+
 	/*
 	 * LIVE state should trigger the normal error recovery which will
 	 * handle completing this request.
 	 */
-	nvme_rdma_error_recovery(ctrl);
+err_recovery:
+	nvme_rdma_error_recovery(rdma_ctrl);
 	return BLK_EH_RESET_TIMER;
 }
 
@@ -2009,6 +2081,7 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return nvme_fail_nonready_command(&queue->ctrl->ctrl, rq);
 
 	dev = queue->device->dev;
+	req->aborted = false;
 
 	req->sqe.dma = ib_dma_map_single(dev, req->sqe.data,
 					 sizeof(struct nvme_command),
@@ -2113,6 +2186,7 @@ static void nvme_rdma_complete_rq(struct request *rq)
 	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
 	struct nvme_rdma_queue *queue = req->queue;
 	struct ib_device *ibdev = queue->device->dev;
+	bool is_cancel = nvme_is_cancel(req->req.cmd);
 
 	if (req->use_sig_mr)
 		nvme_rdma_check_pi_status(req);
@@ -2121,6 +2195,10 @@ static void nvme_rdma_complete_rq(struct request *rq)
 	ib_dma_unmap_single(ibdev, req->sqe.dma, sizeof(struct nvme_command),
 			    DMA_TO_DEVICE);
 	nvme_complete_rq(rq);
+	if (is_cancel) {
+		if (!test_and_clear_bit(NVME_RDMA_Q_CANCEL_ALL, &queue->flags))
+			clear_bit(NVME_RDMA_Q_CANCEL_ONE, &queue->flags);
+	}
 }
 
 static void nvme_rdma_map_queues(struct blk_mq_tag_set *set)
@@ -2169,6 +2247,7 @@ static void nvme_rdma_reset_ctrl_work(struct work_struct *work)
 		container_of(work, struct nvme_rdma_ctrl, ctrl.reset_work);
 	int ret;
 
+	flush_work(&ctrl->fencing_work);
 	nvme_stop_ctrl(&ctrl->ctrl);
 	nvme_rdma_shutdown_ctrl(ctrl, false);
 
@@ -2289,6 +2368,7 @@ static struct nvme_rdma_ctrl *nvme_rdma_alloc_ctrl(struct device *dev,
 
 	INIT_DELAYED_WORK(&ctrl->reconnect_work,
 			nvme_rdma_reconnect_ctrl_work);
+	INIT_WORK(&ctrl->fencing_work, nvme_rdma_fencing_work);
 	INIT_WORK(&ctrl->err_work, nvme_rdma_error_recovery_work);
 	INIT_WORK(&ctrl->ctrl.reset_work, nvme_rdma_reset_ctrl_work);
 
