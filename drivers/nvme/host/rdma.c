@@ -1995,7 +1995,7 @@ static enum blk_eh_timer_return nvme_rdma_timeout(struct request *rq)
 		 rq->tag, nvme_cid(rq), cmd->common.opcode,
 		 nvme_fabrics_opcode_str(qid, cmd), qid);
 
-	state = nvme_ctrl_state(&ctrl->ctrl);
+	state = nvme_ctrl_state(ctrl);
 	if (state != NVME_CTRL_LIVE && state != NVME_CTRL_FENCING) {
 		/*
 		 * If we are resetting, connecting or deleting we should
