@@ -1221,6 +1221,8 @@ qla2xxx_get_flt_info(scsi_qla_host_t *vha, uint32_t flt_addr)
 
 	ha->flt_region_flt = flt_addr;
 	wptr = (__force __le16 *)ha->flt;
+	if (!ha->isp_ops->read_optrom)
+		goto no_flash_data;
 	ha->isp_ops->read_optrom(vha, flt, flt_addr << 2,
 	    (sizeof(struct qla_flt_header) + FLT_REGIONS_SIZE));
 
@@ -1493,6 +1495,8 @@ qla2xxx_get_fdt_info(scsi_qla_host_t *vha)
 	uint8_t	man_id, flash_id;
 	uint16_t mid = 0, fid = 0;
 
+	if (!ha->isp_ops->read_optrom)
+		goto no_flash_data;
 	ha->isp_ops->read_optrom(vha, fdt, ha->flt_region_fdt << 2,
 	    OPTROM_BURST_DWORDS);
 	if (le16_to_cpu(*wptr) == 0xffff)
@@ -1589,6 +1593,8 @@ qla2xxx_get_idc_param(scsi_qla_host_t *vha)
 		return;
 
 	wptr = (__force __le32 *)req->ring;
+	if (!ha->isp_ops->read_optrom)
+		return;
 	ha->isp_ops->read_optrom(vha, req->ring, QLA82XX_IDC_PARAM_ADDR, 8);
 
 	if (*wptr == cpu_to_le32(0xffffffff)) {
@@ -1686,6 +1692,8 @@ qla2xxx_flash_npiv_conf(scsi_qla_host_t *vha)
 	if (IS_QLA8044(ha))
 		return;
 
+	if (!ha->isp_ops->read_optrom)
+		return;
 	ha->isp_ops->read_optrom(vha, &hdr, ha->flt_region_npiv_conf << 2,
 	    sizeof(struct qla_npiv_header));
 	if (hdr.version == cpu_to_le16(0xffff))
@@ -2102,6 +2110,10 @@ qla25xx_write_nvram_data(scsi_qla_host_t *vha, void *buf, uint32_t naddr,
 
 	if (!dbuf)
 		return QLA_MEMORY_ALLOC_FAILED;
+	if (!ha->isp_ops->read_optrom || !ha->isp_ops->write_optrom) {
+		vfree(dbuf);
+		return QLA_FUNCTION_FAILED;
+	}
 	ha->isp_ops->read_optrom(vha, dbuf, ha->flt_region_vpd_nvram << 2,
 	    RMW_BUFFER_SIZE);
 	memcpy(dbuf + (naddr << 2), buf, bytes);
@@ -4260,6 +4272,9 @@ qla24xx_read_fcp_prio_cfg(scsi_qla_host_t *vha)
 	memset(ha->fcp_prio_cfg, 0, FCP_PRIO_CFG_SIZE);
 
 	fcp_prio_addr = ha->flt_region_fcp_prio;
+
+	if (!ha->isp_ops->read_optrom)
+		goto fail;
 
 	/* first read the fcp priority data header from flash */
 	ha->isp_ops->read_optrom(vha, ha->fcp_prio_cfg,

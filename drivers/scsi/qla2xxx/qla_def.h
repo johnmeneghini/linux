@@ -3534,6 +3534,11 @@ struct isp_operations {
 	int (*write_optrom)(struct scsi_qla_host *, void *, uint32_t,
 		uint32_t);
 
+	void *(*read_optrom_region)(struct scsi_qla_host *, uint16_t,
+		uint16_t, void *, uint32_t, uint32_t);
+	int (*write_optrom_region)(struct scsi_qla_host *, uint16_t,
+		uint16_t, void *, uint32_t, uint32_t);
+
 	int (*get_flash_version) (struct scsi_qla_host *, void *);
 	int (*start_scsi) (srb_t *);
 	int (*start_scsi_mq) (srb_t *);
