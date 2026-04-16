@@ -337,6 +337,7 @@ static inline void wrt_reg_dword(volatile __le32 __iomem *addr, u32 data)
 
 #define MAX_CMDSZ	16		/* SCSI maximum CDB size. */
 #include "qla_fw.h"
+#include "qla_fw29.h"
 
 struct name_list_extended {
 	struct get_name_list_extended *l;
@@ -2360,6 +2361,38 @@ typedef struct {
 	uint8_t reserved_2[48];
 } mrk_entry_t;
 
+/* 29xx definitions */
+#define	STATUS_CONT_TYPE_0	0x10	/* Status continuation entry. */
+typedef struct {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t sys_define;		/* System defined. */
+	uint8_t entry_status;		/* Entry Status. */
+	uint8_t data[124];		/* data */
+} sts_cont_entry_ext_t;
+
+/*
+ * ISP queue - marker entry structure definition.
+ */
+typedef struct {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t handle_count;		/* Handle count. */
+	uint8_t entry_status;		/* Entry Status. */
+	uint32_t sys_define_2;		/* System defined. */
+	target_id_t target;		/* SCSI ID */
+	uint8_t modifier;		/* Modifier (7-0). */
+#define MK_SYNC_ID_LUN	0		/* Synchronize ID/LUN */
+#define MK_SYNC_ID	1		/* Synchronize ID */
+#define MK_SYNC_ALL	2		/* Synchronize all ID/LUN */
+#define MK_SYNC_LIP	3		/* Synchronize all ID/LUN, */
+					/* clear port changed, */
+					/* use sequence number. */
+	uint8_t reserved_1;
+	__le16	sequence_number;	/* Sequence number of event */
+	__le16	lun;			/* SCSI LUN */
+	uint8_t reserved_2[112];
+} mrk_entry_ext_t;
 /*
  * ISP queue - Management Server entry structure definition.
  */
