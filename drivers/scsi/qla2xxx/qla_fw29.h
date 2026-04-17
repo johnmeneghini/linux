@@ -676,44 +676,4 @@ struct vp_rpt_id_entry_24xx_ext {
 		} f2;
 	} u;
 };
-
-struct qla_fmb_version {
-	uint8_t major;
-	uint8_t minor;
-	uint8_t sub;
-	uint8_t build;
-};
-
-struct qla_fmb_upd_time {
-	uint16_t year;
-	uint8_t  month;
-	uint8_t  day;
-
-	uint8_t  hour;
-	uint8_t  minute;
-	uint8_t  second;
-	uint8_t  reserved;
-};
-
-struct qla_flash_memo_block
-{
-	int32_t  signature;	/* "FMBS" */
-#define QLFC_FMB_SIG 0x464D4253
-	uint32_t length;
-	uint32_t version;
-#define QLFC_FMB_VERSION 3
-	uint32_t checksum;
-	struct qla_fmb_version ffv_ver;
-	struct qla_fmb_version mbi_ver;
-	struct  {    /* offset 0x18: MBI package build time: YYYYMMDD */
-		uint16_t year;
-		uint8_t  month;
-		uint8_t  day;
-		uint8_t  reserve[4];
-	} bld_time;
-	uint8_t tool_id [4];
-	struct qla_fmb_upd_time upd_time;	/* offset 0x24: flash update time stamp */
-	struct qla_fmb_version  tool_version;	/* offset 0x2C: FW/tool version */
-};
-
 #endif
