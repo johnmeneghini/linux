@@ -2270,12 +2270,17 @@ qla2xxx_dif_start_scsi_mq(srb_t *sp)
 	sp->iores.res_type = RESOURCE_IOCB | RESOURCE_EXCH;
 	sp->iores.exch_cnt = 1;
 	/*
-	 * 29xx inline crc_2_ext layout carries more DSDs per IOCB, so size
-	 * the firmware resource reservation against the matching slot count.
+	 * Unlike cmd_type_6_ext / cmd_type_7_ext (which carry NUM_CMD67_DSDS
+	 * inline DSDs), cmd_type_crc_2_ext carries only a single inline
+	 * data_dsd; the remaining DSDs live in the separate CRC-context DMA.
+	 * Size the firmware IOCB-pool reservation against the CRC_2 ext inline
+	 * capacity (NUM_CRC2_EXT_INLINE_DSDS) so it mirrors the 24xx path
+	 * (qla24xx_calc_iocbs assumes 1 inline DSD for cmd_type_crc_2) and
+	 * doesn't under-count continuations expected by firmware.
 	 */
 	if (IS_QLA29XX(ha))
 		sp->iores.iocb_cnt = qla29xx_calc_iocbs(vha, tot_dsds,
-						       NUM_CMD67_DSDS);
+						       NUM_CRC2_EXT_INLINE_DSDS);
 	else
 		sp->iores.iocb_cnt = qla24xx_calc_iocbs(vha, tot_dsds);
 	if (qla_get_fw_resources(sp->qpair, &sp->iores))

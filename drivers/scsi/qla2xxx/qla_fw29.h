@@ -96,6 +96,17 @@ struct cmd_type_7_ext {
 	struct dsd64 dsd[NUM_CMD67_DSDS];	/* Data Segment Descriptors */
 };
 
+/*
+ * Inline data-DSD capacity of the 29xx cmd_type_crc_2_ext IOCB.  Unlike
+ * cmd_type_6_ext / cmd_type_7_ext (which carry NUM_CMD67_DSDS inline DSDs),
+ * CRC_2 places the bulk of its DSDs in the separate CRC-context DMA; only
+ * a single data_dsd is carried inline in both the u.nobundling and
+ * u.bundling variants.  Use this constant wherever the IOCB-reservation
+ * calculator needs the CRC_2 ext inline capacity so it stays in sync with
+ * the firmware-facing layout below.
+ */
+#define NUM_CRC2_EXT_INLINE_DSDS	1
+
 struct cmd_type_crc_2_ext {
 	uint8_t entry_type;		/* Entry type. */
 	uint8_t entry_count;		/* Entry count. */
