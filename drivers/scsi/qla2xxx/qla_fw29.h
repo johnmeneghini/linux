@@ -16,6 +16,15 @@
 #define CF2_CSCTL_PRIORITY_TAG		BIT_1
 #define CF2_NO_TRNF_READY_ENABLE	BIT_2
 #define CF2_RX_ID_ENABLE		BIT_3
+
+/*
+ * vp_index layout for 29xx extended command IOCBs
+ * (cmd_type_6_ext, cmd_type_7_ext, cmd_type_crc_2_ext, ...):
+ *   bits [8:0]   - VP index (9 bits)
+ *   bits [15:9]  - reserved, must be zero
+ * Access on a host-endian value via le16_to_cpu(vp_index) & CMD_EXT_VP_INDEX_MASK.
+ */
+#define CMD_EXT_VP_INDEX_MASK		0x01ff
 /*
  * ISP queue - command entry structure definition.
  */
@@ -113,7 +122,8 @@ struct cmd_type_crc_2_ext {
 	__le32	byte_count;		/* Total byte count. */
 
 	__le16	control_flags_2;		/* Control flags - 2 */
-	uint16_t vp_index;  /* 0-8 bits vp idx, rest are rsvd */
+	__le16	vp_index;		/* VP Index (bits [8:0]); bits [15:9] reserved.
+					 * See CMD_EXT_VP_INDEX_MASK. */
 
 	uint32_t reserved_1;
 
@@ -335,8 +345,9 @@ struct els_entry_24xx_ext {
 
 	__le16	tx_dsd_count;
 
-	__le16	vp_index : 9;		/* VP Index 9bits*/
-	uint8_t sof_type : 4;
+	__le16	vp_index : 9;		/* VP Index 9bits */
+	__le16	reserved_1_sof : 3;
+	__le16	sof_type : 4;
 
 	__le32	rx_xchg_address;	/* Receive exchange address. */
 	__le16	rx_dsd_count;
@@ -385,8 +396,9 @@ struct els_sts_entry_24xx_ext {
 
 	__le16	reserved_1;
 
-	__le16	vp_index : 9;		/* VP Index 9bits*/
-	uint8_t sof_type : 4;
+	__le16	vp_index : 9;		/* VP Index 9bits */
+	__le16	reserved_1_sof : 3;
+	__le16	sof_type : 4;
 
 	__le32	rx_xchg_address;	/* Receive exchange address. */
 	__le16	reserved_2;
@@ -503,8 +515,9 @@ struct abts_entry_24xx_ext {
 	__le16	nport_handle;		/* type 0x54 only */
 
 	__le16	control_flags;		/* type 0x55 only */
-	__le16	vp_idx : 9;		/* VP index 9 bits*/
-	uint8_t sof_type : 4;		/* sof_type is upper nibble */
+	__le16	vp_idx : 9;		/* VP index 9 bits */
+	__le16	reserved_1_sof : 3;
+	__le16	sof_type : 4;		/* sof_type is upper nibble */
 
 	__le32	rx_xch_addr;
 
@@ -626,8 +639,8 @@ struct vp_rpt_id_entry_24xx_ext {
 	__le32 resv1;
 	uint8_t vp_acquired;
 	uint8_t vp_setup;
-	__le16 vp_idx:9;		/* VP Index 9bits */
-	uint8_t vp_status:7;		/* VP Status */
+	__le16	vp_idx : 9;		/* VP Index 9bits */
+	__le16	vp_status : 7;		/* VP Status 7bits */
 
 	uint8_t port_id[3];
 	uint8_t format;
