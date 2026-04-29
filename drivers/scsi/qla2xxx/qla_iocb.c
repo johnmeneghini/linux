@@ -2063,7 +2063,7 @@ qla2xxx_start_scsi_mq(srb_t *sp)
 		host_to_fcp_swap((uint8_t *)&cmd_pkt_ext->lun,
 				sizeof(cmd_pkt_ext->lun));
 
-		cmd_pkt_ext->task = qla_scsi_get_task_attr(cmd);
+		cmd_pkt_ext->task = TSK_SIMPLE;
 
 		memcpy(cmd_pkt_ext->fcp_cdb, cmd->cmnd, cmd->cmd_len);
 		host_to_fcp_swap(cmd_pkt_ext->fcp_cdb,
@@ -2096,7 +2096,7 @@ qla2xxx_start_scsi_mq(srb_t *sp)
 		host_to_fcp_swap((uint8_t *)&cmd_pkt->lun,
 				sizeof(cmd_pkt->lun));
 
-		cmd_pkt->task = qla_scsi_get_task_attr(cmd);
+		cmd_pkt->task = TSK_SIMPLE;
 
 		memcpy(cmd_pkt->fcp_cdb, cmd->cmnd, cmd->cmd_len);
 		host_to_fcp_swap(cmd_pkt->fcp_cdb,
@@ -5043,7 +5043,7 @@ qla29xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2_ext *cmd_pkt,
 	put_unaligned_le64(crc_ctx_dma + CRC_CONTEXT_FCPCMND_OFF,
 			   &cmd_pkt->fcp_cmnd_dseg_address);
 	fcp_cmnd->task_management = 0;
-	fcp_cmnd->task_attribute = qla_scsi_get_task_attr(cmd);
+	fcp_cmnd->task_attribute = TSK_SIMPLE;
 
 	cmd_pkt->fcp_rsp_dseg_len = 0; /* Let response come in status iocb */
 
@@ -5124,7 +5124,7 @@ qla29xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2_ext *cmd_pkt,
 		cmd_pkt->control_flags_1 |= cpu_to_le16(CF_DIF_SEG_DESCR_ENABLE);
 		cur_dsd = &crc_ctx_pkt->u.bundling.dif_dsd;
 		if (qla24xx_walk_and_build_prot_sglist(ha, sp, cur_dsd,
-				tot_prot_dsds))
+				tot_prot_dsds, NULL))
 			goto crc_queuing_error;
 	}
 	qla29xx_copy_dif_iocb_data(cmd_pkt, crc_ctx_pkt, bundling);
