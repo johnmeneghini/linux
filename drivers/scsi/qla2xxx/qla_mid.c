@@ -574,13 +574,11 @@ qla25xx_free_req_que(struct scsi_qla_host *vha, struct req_que *req)
 {
 	struct qla_hw_data *ha = vha->hw;
 	uint16_t que_id = req->id;
-	uint16_t reqsz;
+	size_t req_entry_size = qla_req_entry_size(ha);
 
-	reqsz = IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-				 sizeof(request_t);
-
-	dma_free_coherent(&ha->pdev->dev, (req->length + 1) *
-			  reqsz, req->ring, req->dma);
+	dma_free_coherent(&ha->pdev->dev,
+			  (req->length + 1) * req_entry_size,
+			  req->ring, req->dma);
 	req->ring = NULL;
 	req->dma = 0;
 	if (que_id) {
@@ -598,10 +596,7 @@ qla25xx_free_rsp_que(struct scsi_qla_host *vha, struct rsp_que *rsp)
 {
 	struct qla_hw_data *ha = vha->hw;
 	uint16_t que_id = rsp->id;
-	uint16_t rspsz;
-
-	rspsz = IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-				 sizeof(response_t);
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
 
 	if (rsp->msix && rsp->msix->have_irq) {
 		free_irq(rsp->msix->vector, rsp->msix->handle);
@@ -610,8 +605,9 @@ qla25xx_free_rsp_que(struct scsi_qla_host *vha, struct rsp_que *rsp)
 		rsp->msix->handle = NULL;
 	}
 
-	dma_free_coherent(&ha->pdev->dev, (rsp->length + 1) *
-			  rspsz, rsp->ring, rsp->dma);
+	dma_free_coherent(&ha->pdev->dev,
+			  (rsp->length + 1) * rsp_entry_size,
+			  rsp->ring, rsp->dma);
 	rsp->ring = NULL;
 	rsp->dma = 0;
 	if (que_id) {
@@ -715,7 +711,7 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 	uint16_t que_id = 0;
 	device_reg_t *reg;
 	uint32_t cnt;
-	uint16_t reqsz;
+	size_t req_entry_size = qla_req_entry_size(ha);
 
 	req = kzalloc_obj(struct req_que);
 	if (req == NULL) {
@@ -724,12 +720,9 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 		goto failed;
 	}
 
-	reqsz = IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-				 sizeof(request_t);
-
 	req->length = REQUEST_ENTRY_CNT_24XX;
 	req->ring = dma_alloc_coherent(&ha->pdev->dev,
-			(req->length + 1) * reqsz,
+			(req->length + 1) * req_entry_size,
 			&req->dma, GFP_KERNEL);
 	if (req->ring == NULL) {
 		ql_log(ql_log_fatal, base_vha, 0x00da,
@@ -866,7 +859,7 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 	struct scsi_qla_host *vha = pci_get_drvdata(ha->pdev);
 	uint16_t que_id = 0;
 	device_reg_t *reg;
-	uint16_t rspsz;
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
 
 	rsp = kzalloc_obj(struct rsp_que);
 	if (rsp == NULL) {
@@ -875,12 +868,9 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 		goto failed;
 	}
 
-	rspsz = IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-				 sizeof(response_t);
-
 	rsp->length = RESPONSE_ENTRY_CNT_MQ;
 	rsp->ring = dma_alloc_coherent(&ha->pdev->dev,
-			(rsp->length + 1) * rspsz,
+			(rsp->length + 1) * rsp_entry_size,
 			&rsp->dma, GFP_KERNEL);
 	if (rsp->ring == NULL) {
 		ql_log(ql_log_warn, base_vha, 0x00e1,

@@ -502,6 +502,8 @@ fail_req_map:
 
 static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 {
+	size_t req_entry_size = qla_req_entry_size(ha);
+
 	if (IS_QLAFX00(ha)) {
 		if (req && req->ring_fx00)
 			dma_free_coherent(&ha->pdev->dev,
@@ -509,10 +511,8 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 			    req->ring_fx00, req->dma_fx00);
 	} else if (req && req->ring)
 		dma_free_coherent(&ha->pdev->dev,
-		(req->length + 1) *
-			(IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-					  sizeof(request_t)),
-		req->ring, req->dma);
+		    (req->length + 1) * req_entry_size,
+		    req->ring, req->dma);
 
 	if (req)
 		kfree(req->outstanding_cmds);
@@ -522,6 +522,8 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 
 static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 {
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
+
 	if (IS_QLAFX00(ha)) {
 		if (rsp && rsp->ring_fx00)
 			dma_free_coherent(&ha->pdev->dev,
@@ -529,9 +531,7 @@ static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 			    rsp->ring_fx00, rsp->dma_fx00);
 	} else if (rsp && rsp->ring) {
 		dma_free_coherent(&ha->pdev->dev,
-		    (rsp->length + 1) *
-			(IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-					  sizeof(response_t)),
+		    (rsp->length + 1) * rsp_entry_size,
 		    rsp->ring, rsp->dma);
 	}
 	kfree(rsp);
@@ -4226,6 +4226,8 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 {
 	char	name[16];
 	int rc;
+	size_t req_entry_size = qla_req_entry_size(ha);
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
 
 	if (QLA_TGT_MODE_ENABLED() || EDIF_CAP(ha)) {
 		ha->vp_map = kzalloc_objs(struct qla_vp_map,
@@ -4421,9 +4423,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	}
 	(*req)->length = req_len;
 	(*req)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*req)->length + 1) *
-			(IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-					  sizeof(request_t)),
+		((*req)->length + 1) * req_entry_size,
 		&(*req)->dma, GFP_KERNEL);
 	if (!(*req)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x0029,
@@ -4444,9 +4444,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	(*rsp)->hw = ha;
 	(*rsp)->length = rsp_len;
 	(*rsp)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*rsp)->length + 1) *
-			(IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-					  sizeof(response_t)),
+		((*rsp)->length + 1) * rsp_entry_size,
 		&(*rsp)->dma, GFP_KERNEL);
 	if (!(*rsp)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x002b,
@@ -4606,8 +4604,8 @@ fail_sf_init_cb:
 fail_ex_init_cb:
 	kfree(ha->npiv_info);
 fail_npiv_info:
-	dma_free_coherent(&ha->pdev->dev, ((*rsp)->length + 1) *
-		(IS_QLA29XX(ha) ? sizeof(response_ext_t) : sizeof(response_t)),
+	dma_free_coherent(&ha->pdev->dev,
+		((*rsp)->length + 1) * rsp_entry_size,
 		(*rsp)->ring, (*rsp)->dma);
 	(*rsp)->ring = NULL;
 	(*rsp)->dma = 0;
@@ -4615,8 +4613,8 @@ fail_rsp_ring:
 	kfree(*rsp);
 	*rsp = NULL;
 fail_rsp:
-	dma_free_coherent(&ha->pdev->dev, ((*req)->length + 1) *
-		(IS_QLA29XX(ha) ? sizeof(request_ext_t) : sizeof(request_t)),
+	dma_free_coherent(&ha->pdev->dev,
+		((*req)->length + 1) * req_entry_size,
 		(*req)->ring, (*req)->dma);
 	(*req)->ring = NULL;
 	(*req)->dma = 0;

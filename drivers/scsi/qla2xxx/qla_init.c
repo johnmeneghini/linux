@@ -3814,6 +3814,8 @@ qla2x00_alloc_fw_dump(scsi_qla_host_t *vha)
 	struct req_que *req = ha->req_q_map[0];
 	struct rsp_que *rsp = ha->rsp_q_map[0];
 	struct qla2xxx_fw_dump *fw_dump;
+	size_t req_entry_size = qla_req_entry_size(ha);
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
 
 	if (ha->fw_dump) {
 		ql_dbg(ql_dbg_init, vha, 0x00bd,
@@ -3852,13 +3854,9 @@ qla2x00_alloc_fw_dump(scsi_qla_host_t *vha)
 			 * Resizing must be done at end-of-dump processing.
 			 */
 			mq_size += (ha->max_req_queues - 1) *
-			    (req->length *
-			     (IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-					       sizeof(request_t)));
+			    (req->length * req_entry_size);
 			mq_size += (ha->max_rsp_queues - 1) *
-			    (rsp->length *
-			     (IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-					       sizeof(response_t)));
+			    (rsp->length * rsp_entry_size);
 		}
 		if (ha->tgt.atio_ring)
 			mq_size += ha->tgt.atio_q_length * sizeof(request_t);
@@ -3894,12 +3892,8 @@ qla2x00_alloc_fw_dump(scsi_qla_host_t *vha)
 		/* Add space for spare MPI fw dump. */
 		dump_size += ha->fwdt[1].dump_size;
 	} else {
-		req_q_size = req->length *
-		    (IS_QLA29XX(ha) ? sizeof(request_ext_t) :
-				      sizeof(request_t));
-		rsp_q_size = rsp->length *
-		    (IS_QLA29XX(ha) ? sizeof(response_ext_t) :
-				      sizeof(response_t));
+		req_q_size = req->length * req_entry_size;
+		rsp_q_size = rsp->length * rsp_entry_size;
 		dump_size = offsetof(struct qla2xxx_fw_dump, isp);
 		dump_size += fixed_size + mem_size + req_q_size + rsp_q_size
 			+ eft_size;

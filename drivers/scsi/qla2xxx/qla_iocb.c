@@ -485,7 +485,8 @@ qla2x00_start_iocbs(struct scsi_qla_host *vha, struct req_que *req)
 		qla_req_ring_advance(ha, req);
 
 		/* Set chip new ring index. */
-		if (ha->mqenable || IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
+		if (ha->mqenable || IS_QLA27XX(ha) || IS_QLA28XX(ha) ||
+		    IS_QLA29XX(ha)) {
 			wrt_reg_dword(req->req_q_in, req->ring_index);
 		} else if (IS_QLA83XX(ha)) {
 			wrt_reg_dword(req->req_q_in, req->ring_index);
@@ -2434,7 +2435,7 @@ __qla2x00_alloc_iocbs(struct qla_qpair *qpair, srb_t *sp)
 		if (qpair->use_shadow_reg)
 			cnt = *req->out_ptr;
 		else if (ha->mqenable || IS_QLA83XX(ha) || IS_QLA27XX(ha) ||
-		    IS_QLA28XX(ha))
+		    IS_QLA28XX(ha) || IS_QLA29XX(ha))
 			cnt = rd_reg_dword(&reg->isp25mq.req_q_out);
 		else if (IS_P3P_TYPE(ha))
 			cnt = rd_reg_dword(reg->isp82.req_q_out);
