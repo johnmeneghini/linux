@@ -54,6 +54,30 @@ qla2x00_debounce_register(volatile __le16 __iomem *addr)
 	return (first);
 }
 
+/**
+ * qla29xx_calc_iocbs() - Determine number of Command-Type and Continuation
+ * IOCBs to allocate for the 29xx extended (128-byte) IOCB ring.
+ * @vha: HA context
+ * @dsds: number of data segment descriptors needed
+ * @iocb_dsds: number of DSDs embedded in the first (command) IOCB.  The
+ *	remaining DSDs ride on Continuation Type 1 Ext IOCBs which hold
+ *	NUM_CONT1_DSDS (10) each.
+ *
+ * Returns the total number of IOCB entries needed to carry @dsds.
+ */
+static inline uint16_t
+qla29xx_calc_iocbs(scsi_qla_host_t *vha, uint16_t dsds, uint8_t iocb_dsds)
+{
+	uint16_t iocbs = 1;
+
+	if (dsds > iocb_dsds) {
+		iocbs += (dsds - iocb_dsds) / NUM_CONT1_DSDS;
+		if ((dsds - iocb_dsds) % NUM_CONT1_DSDS)
+			iocbs++;
+	}
+	return iocbs;
+}
+
 static inline void
 qla2x00_poll(struct rsp_que *rsp)
 {
@@ -358,15 +382,82 @@ static inline void
 qla_83xx_start_iocbs(struct qla_qpair *qpair)
 {
 	struct req_que *req = qpair->req;
+	struct qla_hw_data *ha = qpair->vha->hw;
 
+	/*
+	 * 29xx uses the 128-byte-strided extended request ring; advance the
+	 * matching ring_ext_ptr so the next IOCB allocator sees the correct
+	 * slot.  All other 83xx-family generations (83xx/27xx/28xx) keep the
+	 * 64-byte ring_ptr.
+	 */
 	req->ring_index++;
-	if (req->ring_index == req->length) {
-		req->ring_index = 0;
-		req->ring_ptr = req->ring;
-	} else
-		req->ring_ptr++;
+	if (IS_QLA29XX(ha)) {
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ext_ptr = req->ring_ext;
+		} else {
+			req->ring_ext_ptr++;
+		}
+	} else {
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ptr = req->ring;
+		} else {
+			req->ring_ptr++;
+		}
+	}
 
 	wrt_reg_dword(req->req_q_in, req->ring_index);
+}
+
+/**
+ * qla_rsp_ring_advance() - Advance the response queue consumer pointer
+ * to the next IOCB slot, handling both 24xx (64-byte) and 29xx (128-byte)
+ * ring strides.
+ *
+ * On 29xx, ring_ext_ptr is the authoritative slot pointer (correct 128-byte
+ * pitch) and ring_ptr is kept in sync as a response_t view of the same slot
+ * so existing 24xx-shaped reads (rsp->ring_ptr->signature,
+ * (struct sts_entry_24xx *)rsp->ring_ptr, etc.) keep working unchanged; the
+ * first 64 bytes of response_ext_t are layout-compatible with response_t.
+ */
+static inline void
+qla_rsp_ring_advance(struct rsp_que *rsp)
+{
+	rsp->ring_index++;
+	if (rsp->ring_index == rsp->length) {
+		rsp->ring_index = 0;
+		rsp->ring_ptr = rsp->ring;
+		if (rsp->hw && IS_QLA29XX(rsp->hw))
+			rsp->ring_ext_ptr = rsp->ring_ext;
+	} else if (rsp->hw && IS_QLA29XX(rsp->hw)) {
+		rsp->ring_ext_ptr++;
+		rsp->ring_ptr = (response_t *)rsp->ring_ext_ptr;
+	} else {
+		rsp->ring_ptr++;
+	}
+}
+
+/**
+ * qla_rsp_ring_rewind_to() - Restore the response queue consumer pointer
+ * to a previously-observed slot (used when we need to defer processing an
+ * IOCB whose continuation entries have not yet arrived).
+ * @rsp: response queue
+ * @pkt: 64-byte view of the slot to rewind to (captured from a prior read
+ *       of rsp->ring_ptr)
+ * @idx: matching ring_index value (also captured before the advance)
+ *
+ * On 29xx, pkt was originally obtained as (response_t *)rsp->ring_ext_ptr,
+ * so casting back to response_ext_t * recovers the 128-byte-stride slot
+ * pointer.
+ */
+static inline void
+qla_rsp_ring_rewind_to(struct rsp_que *rsp, response_t *pkt, uint16_t idx)
+{
+	rsp->ring_ptr = pkt;
+	rsp->ring_index = idx;
+	if (rsp->hw && IS_QLA29XX(rsp->hw))
+		rsp->ring_ext_ptr = (response_ext_t *)pkt;
 }
 
 static inline int

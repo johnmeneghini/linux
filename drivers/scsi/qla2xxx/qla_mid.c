@@ -736,6 +736,10 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 		    "Failed to allocate memory for request_ring.\n");
 		goto que_failed;
 	}
+	if (IS_QLA29XX(ha)) {
+		req->ring_ext = (request_ext_t *)req->ring;
+		req->ring_ext_ptr = req->ring_ext;
+	}
 
 	ret = qla2x00_alloc_outstanding_cmds(ha, req);
 	if (ret != QLA_SUCCESS)
@@ -781,7 +785,15 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 		req->outstanding_cmds[cnt] = NULL;
 	req->current_outstanding_cmd = 1;
 
+	/*
+	 * Re-anchor both the 24xx (ring_ptr) and 29xx (ring_ext_ptr) views
+	 * at the start of the ring.  Keeping them reset together here
+	 * guarantees they stay in sync with ring_index=0 regardless of any
+	 * prior allocator/fast-path advances against this queue.
+	 */
 	req->ring_ptr = req->ring;
+	if (IS_QLA29XX(ha))
+		req->ring_ext_ptr = req->ring_ext;
 	req->ring_index = 0;
 	req->cnt = req->length;
 	req->id = que_id;
@@ -789,7 +801,15 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 	req->req_q_in = &reg->isp25mq.req_q_in;
 	req->req_q_out = &reg->isp25mq.req_q_out;
 	req->max_q_depth = ha->req_q_map[0]->max_q_depth;
-	req->out_ptr = (uint16_t *)(req->ring + req->length);
+	/*
+	 * out_ptr sits in the scratch slot immediately after the ring.  Use
+	 * the 29xx-stride pointer when the ring is 128-byte-per-entry so the
+	 * pointer arithmetic resolves to the correct byte offset.
+	 */
+	if (IS_QLA29XX(ha))
+		req->out_ptr = (uint16_t *)(req->ring_ext + req->length);
+	else
+		req->out_ptr = (uint16_t *)(req->ring + req->length);
 	mutex_unlock(&ha->mq_lock);
 	ql_dbg(ql_dbg_multiq, base_vha, 0xc004,
 	    "ring_ptr=%p ring_index=%d, "
@@ -867,6 +887,10 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 		    "Failed to allocate memory for response ring.\n");
 		goto que_failed;
 	}
+	if (IS_QLA29XX(ha)) {
+		rsp->ring_ext = (response_ext_t *)rsp->ring;
+		rsp->ring_ext_ptr = rsp->ring_ext;
+	}
 
 	mutex_lock(&ha->mq_lock);
 	que_id = find_first_zero_bit(ha->rsp_qid_map, ha->max_rsp_queues);
@@ -905,7 +929,10 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 	reg = ISP_QUE_REG(ha, que_id);
 	rsp->rsp_q_in = &reg->isp25mq.rsp_q_in;
 	rsp->rsp_q_out = &reg->isp25mq.rsp_q_out;
-	rsp->in_ptr = (uint16_t *)(rsp->ring + rsp->length);
+	if (IS_QLA29XX(ha))
+		rsp->in_ptr = (uint16_t *)(rsp->ring_ext + rsp->length);
+	else
+		rsp->in_ptr = (uint16_t *)(rsp->ring + rsp->length);
 	mutex_unlock(&ha->mq_lock);
 	ql_dbg(ql_dbg_multiq, base_vha, 0xc00b,
 	    "options=%x id=%d rsp_q_in=%p rsp_q_out=%p\n",

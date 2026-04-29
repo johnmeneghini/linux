@@ -509,7 +509,9 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 			    req->ring_fx00, req->dma_fx00);
 	} else if (req && req->ring)
 		dma_free_coherent(&ha->pdev->dev,
-		(req->length + 1) * sizeof(request_t),
+		(req->length + 1) *
+			(IS_QLA29XX(ha) ? sizeof(request_ext_t) :
+					  sizeof(request_t)),
 		req->ring, req->dma);
 
 	if (req)
@@ -527,8 +529,10 @@ static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 			    rsp->ring_fx00, rsp->dma_fx00);
 	} else if (rsp && rsp->ring) {
 		dma_free_coherent(&ha->pdev->dev,
-		(rsp->length + 1) * sizeof(response_t),
-		rsp->ring, rsp->dma);
+		    (rsp->length + 1) *
+			(IS_QLA29XX(ha) ? sizeof(response_ext_t) :
+					  sizeof(response_t)),
+		    rsp->ring, rsp->dma);
 	}
 	kfree(rsp);
 }
@@ -4417,12 +4421,18 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	}
 	(*req)->length = req_len;
 	(*req)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*req)->length + 1) * sizeof(request_t),
+		((*req)->length + 1) *
+			(IS_QLA29XX(ha) ? sizeof(request_ext_t) :
+					  sizeof(request_t)),
 		&(*req)->dma, GFP_KERNEL);
 	if (!(*req)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x0029,
 		    "Failed to allocate memory for req_ring.\n");
 		goto fail_req_ring;
+	}
+	if (IS_QLA29XX(ha)) {
+		(*req)->ring_ext = (request_ext_t *)(*req)->ring;
+		(*req)->ring_ext_ptr = (*req)->ring_ext;
 	}
 	/* Allocate memory for response ring */
 	*rsp = kzalloc_obj(struct rsp_que);
@@ -4434,12 +4444,18 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	(*rsp)->hw = ha;
 	(*rsp)->length = rsp_len;
 	(*rsp)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*rsp)->length + 1) * sizeof(response_t),
+		((*rsp)->length + 1) *
+			(IS_QLA29XX(ha) ? sizeof(response_ext_t) :
+					  sizeof(response_t)),
 		&(*rsp)->dma, GFP_KERNEL);
 	if (!(*rsp)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x002b,
 		    "Failed to allocate memory for rsp_ring.\n");
 		goto fail_rsp_ring;
+	}
+	if (IS_QLA29XX(ha)) {
+		(*rsp)->ring_ext = (response_ext_t *)(*rsp)->ring;
+		(*rsp)->ring_ext_ptr = (*rsp)->ring_ext;
 	}
 	(*req)->rsp = *rsp;
 	(*rsp)->req = *req;
@@ -4591,7 +4607,8 @@ fail_ex_init_cb:
 	kfree(ha->npiv_info);
 fail_npiv_info:
 	dma_free_coherent(&ha->pdev->dev, ((*rsp)->length + 1) *
-		sizeof(response_t), (*rsp)->ring, (*rsp)->dma);
+		(IS_QLA29XX(ha) ? sizeof(response_ext_t) : sizeof(response_t)),
+		(*rsp)->ring, (*rsp)->dma);
 	(*rsp)->ring = NULL;
 	(*rsp)->dma = 0;
 fail_rsp_ring:
@@ -4599,7 +4616,8 @@ fail_rsp_ring:
 	*rsp = NULL;
 fail_rsp:
 	dma_free_coherent(&ha->pdev->dev, ((*req)->length + 1) *
-		sizeof(request_t), (*req)->ring, (*req)->dma);
+		(IS_QLA29XX(ha) ? sizeof(request_ext_t) : sizeof(request_t)),
+		(*req)->ring, (*req)->dma);
 	(*req)->ring = NULL;
 	(*req)->dma = 0;
 fail_req_ring:

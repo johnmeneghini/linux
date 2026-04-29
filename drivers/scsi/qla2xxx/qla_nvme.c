@@ -555,6 +555,7 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	uint32_t        *clr_ptr;
 	uint32_t        handle;
 	struct cmd_nvme *cmd_pkt;
+	struct cmd_nvme_ext *cmd_pkt_ext;
 	uint16_t        cnt, i;
 	uint16_t        req_cnt;
 	uint16_t        tot_dsds;
@@ -584,7 +585,10 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 		rval = -EBUSY;
 		goto queuing_error;
 	}
-	req_cnt = qla24xx_calc_iocbs(vha, tot_dsds);
+	if (IS_QLA29XX(ha))
+		req_cnt = qla29xx_calc_iocbs(vha, tot_dsds, NUM_NVME_DSDS);
+	else
+		req_cnt = qla24xx_calc_iocbs(vha, tot_dsds);
 
 	sp->iores.res_type = RESOURCE_IOCB | RESOURCE_EXCH;
 	sp->iores.exch_cnt = 1;
@@ -629,12 +633,26 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	sp->handle = handle;
 	req->cnt -= req_cnt;
 
-	cmd_pkt = (struct cmd_nvme *)req->ring_ptr;
+	/*
+	 * 29xx operates on the 128-byte extended IOCB ring via ring_ext_ptr;
+	 * the header layout of struct cmd_nvme is identical to the head of
+	 * struct cmd_nvme_ext through 'byte_count', so common field writes
+	 * below go through 'cmd_pkt'.  Divergent tail fields
+	 * (port_id/vp_index, DSD array) are handled via IS_QLA29XX() branches.
+	 */
+	if (IS_QLA29XX(ha))
+		cmd_pkt = (struct cmd_nvme *)req->ring_ext_ptr;
+	else
+		cmd_pkt = (struct cmd_nvme *)req->ring_ptr;
+	cmd_pkt_ext = (struct cmd_nvme_ext *)cmd_pkt;
 	cmd_pkt->handle = make_handle(req->id, handle);
 
 	/* Zero out remaining portion of packet. */
 	clr_ptr = (uint32_t *)cmd_pkt + 2;
-	memset(clr_ptr, 0, REQUEST_ENTRY_SIZE - 8);
+	if (IS_QLA29XX(ha))
+		memset(clr_ptr, 0, REQUEST_ENTRY_SIZE_EXT - 8);
+	else
+		memset(clr_ptr, 0, REQUEST_ENTRY_SIZE - 8);
 
 	cmd_pkt->entry_status = 0;
 
@@ -674,10 +692,18 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 
 	/* Set NPORT-ID */
 	cmd_pkt->nport_handle = cpu_to_le16(sp->fcport->loop_id);
-	cmd_pkt->port_id[0] = sp->fcport->d_id.b.al_pa;
-	cmd_pkt->port_id[1] = sp->fcport->d_id.b.area;
-	cmd_pkt->port_id[2] = sp->fcport->d_id.b.domain;
-	cmd_pkt->vp_index = sp->fcport->vha->vp_idx;
+	if (IS_QLA29XX(ha)) {
+		/*
+		 * 29xx extended NVMe IOCB has no port_id[] field; vp_index is a
+		 * 9-bit __le16 (see CMD_EXT_VP_INDEX_MASK).
+		 */
+		cmd_pkt_ext->vp_index = cpu_to_le16(sp->fcport->vha->vp_idx);
+	} else {
+		cmd_pkt->port_id[0] = sp->fcport->d_id.b.al_pa;
+		cmd_pkt->port_id[1] = sp->fcport->d_id.b.area;
+		cmd_pkt->port_id[2] = sp->fcport->d_id.b.domain;
+		cmd_pkt->vp_index = sp->fcport->vha->vp_idx;
+	}
 
 	/* NVME RSP IU */
 	cmd_pkt->nvme_rsp_dsd_len = cpu_to_le16(fd->rsplen);
@@ -690,36 +716,51 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	cmd_pkt->dseg_count = cpu_to_le16(tot_dsds);
 	cmd_pkt->byte_count = cpu_to_le32(fd->payload_length);
 
-	/* One DSD is available in the Command Type NVME IOCB */
-	avail_dsds = 1;
-	cur_dsd = &cmd_pkt->nvme_dsd;
+	/*
+	 * 24xx carries a single inline DSD in the NVMe command IOCB; 29xx
+	 * carries NUM_NVME_DSDS inline DSDs in the extended IOCB.
+	 */
+	if (IS_QLA29XX(ha)) {
+		avail_dsds = NUM_NVME_DSDS;
+		cur_dsd = &cmd_pkt_ext->nvme_dsd[0];
+	} else {
+		avail_dsds = 1;
+		cur_dsd = &cmd_pkt->nvme_dsd;
+	}
 	sgl = fd->first_sgl;
 
 	/* Load data segments */
 	for_each_sg(sgl, sg, tot_dsds, i) {
-		cont_a64_entry_t *cont_pkt;
-
 		/* Allocate additional continuation packets? */
 		if (avail_dsds == 0) {
-			/*
-			 * Five DSDs are available in the Continuation
-			 * Type 1 IOCB.
-			 */
+			if (IS_QLA29XX(ha)) {
+				cont_a64_entry_ext_t *cont_pkt;
 
-			/* Adjust ring index */
-			req->ring_index++;
-			if (req->ring_index == req->length) {
-				req->ring_index = 0;
-				req->ring_ptr = req->ring;
+				cont_pkt = qla2900_prep_cont_type1_iocb(vha,
+									req);
+				cur_dsd = cont_pkt->dsd;
+				avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
 			} else {
-				req->ring_ptr++;
-			}
-			cont_pkt = (cont_a64_entry_t *)req->ring_ptr;
-			put_unaligned_le32(CONTINUE_A64_TYPE,
-					   &cont_pkt->entry_type);
+				cont_a64_entry_t *cont_pkt;
 
-			cur_dsd = cont_pkt->dsd;
-			avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
+				/*
+				 * Five DSDs are available in the 24xx
+				 * Continuation Type 1 IOCB.
+				 */
+				req->ring_index++;
+				if (req->ring_index == req->length) {
+					req->ring_index = 0;
+					req->ring_ptr = req->ring;
+				} else {
+					req->ring_ptr++;
+				}
+				cont_pkt = (cont_a64_entry_t *)req->ring_ptr;
+				put_unaligned_le32(CONTINUE_A64_TYPE,
+						   &cont_pkt->entry_type);
+
+				cur_dsd = cont_pkt->dsd;
+				avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
+			}
 		}
 
 		append_dsd64(&cur_dsd, sg);
@@ -732,11 +773,20 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 
 	/* Adjust ring index. */
 	req->ring_index++;
-	if (req->ring_index == req->length) {
-		req->ring_index = 0;
-		req->ring_ptr = req->ring;
+	if (IS_QLA29XX(ha)) {
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ext_ptr = req->ring_ext;
+		} else {
+			req->ring_ext_ptr++;
+		}
 	} else {
-		req->ring_ptr++;
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ptr = req->ring;
+		} else {
+			req->ring_ptr++;
+		}
 	}
 
 	/* ignore nvme async cmd due to long timeout */
@@ -746,7 +796,12 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	/* Set chip new ring index. */
 	wrt_reg_dword(req->req_q_in, req->ring_index);
 
-	if (vha->flags.process_response_queue &&
+	/*
+	 * 29xx inline response drain would require the 128-byte response ring
+	 * view, which the 24xx qla24xx_process_response_queue() does not walk;
+	 * skip here and rely on the normal ISR path.
+	 */
+	if (!IS_QLA29XX(ha) && vha->flags.process_response_queue &&
 	    rsp->ring_ptr->signature != RESPONSE_PROCESSED)
 		qla24xx_process_response_queue(vha, rsp);
 
