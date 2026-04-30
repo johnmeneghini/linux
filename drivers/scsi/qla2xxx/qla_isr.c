@@ -3917,9 +3917,10 @@ static int qla_chk_cont_iocb_avail(struct scsi_qla_host *vha,
 }
 
 static void qla_marker_iocb_entry(scsi_qla_host_t *vha, struct req_que *req,
-	struct mrk_entry_24xx *pkt)
+	void *pkt)
 {
 	const char func[] = "MRK-IOCB";
+	struct mrk_entry_24xx *mrk = pkt;
 	srb_t *sp;
 	int res = QLA_SUCCESS;
 
@@ -3930,7 +3931,7 @@ static void qla_marker_iocb_entry(scsi_qla_host_t *vha, struct req_que *req,
 	if (!sp)
 		return;
 
-	if (pkt->entry_status) {
+	if (mrk->entry_status) {
 		ql_dbg(ql_dbg_taskm, vha, 0x8025, "marker failure.\n");
 		res = QLA_COMMAND_ERROR;
 	}
@@ -4049,7 +4050,7 @@ process_err:
 					(struct nack_to_isp *)pkt);
 			break;
 		case MARKER_TYPE:
-			qla_marker_iocb_entry(vha, rsp->req, (struct mrk_entry_24xx *)pkt);
+			qla_marker_iocb_entry(vha, rsp->req, pkt);
 			break;
 		case ABORT_IOCB_TYPE:
 			qla24xx_abort_iocb_entry(vha, rsp->req,

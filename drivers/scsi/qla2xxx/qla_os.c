@@ -8302,6 +8302,7 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(cont_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(init_cb_t) != 96);
 	BUILD_BUG_ON(sizeof(mrk_entry_t) != 64);
+	BUILD_BUG_ON(sizeof(mrk_entry_ext_t) != 128);
 	BUILD_BUG_ON(sizeof(ms_iocb_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(request_t) != 64);
 	BUILD_BUG_ON(sizeof(struct abort_entry_24xx) != 64);
@@ -8338,6 +8339,7 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(struct mbx_entry) != 64);
 	BUILD_BUG_ON(sizeof(struct mid_init_cb_24xx) != 5252);
 	BUILD_BUG_ON(sizeof(struct mrk_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct mrk_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct nvram_24xx) != 512);
 	BUILD_BUG_ON(sizeof(struct nvram_81xx) != 512);
 	BUILD_BUG_ON(sizeof(struct pt_ls4_request) != 64);

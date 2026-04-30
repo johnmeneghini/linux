@@ -522,63 +522,38 @@ static int
 __qla2x00_marker(struct scsi_qla_host *vha, struct qla_qpair *qpair,
     uint16_t loop_id, uint64_t lun, uint8_t type)
 {
-	mrk_entry_t *mrk;
-	struct mrk_entry_24xx *mrk24 = NULL;
-	struct req_que *req = qpair->req;
 	struct qla_hw_data *ha = vha->hw;
+	struct mrk_entry_24xx *mrk24;
+	struct req_que *req = qpair->req;
 	scsi_qla_host_t *base_vha = pci_get_drvdata(ha->pdev);
-
-	mrk = (mrk_entry_t *)__qla2x00_alloc_iocbs(qpair, NULL);
-	if (mrk == NULL) {
-		ql_log(ql_log_warn, base_vha, 0x3026,
-		    "Failed to allocate Marker IOCB.\n");
-
-		return (QLA_FUNCTION_FAILED);
-	}
 
 	/*
 	 * 29xx uses the extended marker IOCB (128 bytes) with a __le16
 	 * vp_index field.  The first 64 bytes of mrk_entry_24xx_ext are
-	 * layout-compatible with mrk_entry_24xx except for the vp_index
-	 * storage, which differs in width and offset, so handle it via
-	 * a dedicated branch.
+	 * layout-compatible with mrk_entry_24xx through 'lun', so the
+	 * common header is written through a struct mrk_entry_24xx * view;
+	 * vp_index differs in width (u8 vs __le16) and is the only branch.
 	 */
-	if (IS_QLA29XX(ha)) {
-		struct mrk_entry_24xx_ext *mrk29 =
-			(struct mrk_entry_24xx_ext *)mrk;
-
-		mrk29->entry_type = MARKER_TYPE;
-		mrk29->modifier = type;
-		if (type != MK_SYNC_ALL) {
-			mrk29->nport_handle = cpu_to_le16(loop_id);
-			int_to_scsilun(lun, (struct scsi_lun *)&mrk29->lun);
-			host_to_fcp_swap(mrk29->lun, sizeof(mrk29->lun));
-			mrk29->vp_index = cpu_to_le16(vha->vp_idx);
-		}
-		mrk29->handle = QLA_SKIP_HANDLE;
-		goto post;
+	mrk24 = __qla2x00_alloc_iocbs(qpair, NULL);
+	if (!mrk24) {
+		ql_log(ql_log_warn, base_vha, 0x3026,
+		    "Failed to allocate Marker IOCB.\n");
+		return QLA_FUNCTION_FAILED;
 	}
 
-	mrk24 = (struct mrk_entry_24xx *)mrk;
-
-	mrk->entry_type = MARKER_TYPE;
-	mrk->modifier = type;
+	mrk24->entry_type = MARKER_TYPE;
+	mrk24->modifier = type;
 	if (type != MK_SYNC_ALL) {
-		if (IS_FWI2_CAPABLE(ha)) {
-			mrk24->nport_handle = cpu_to_le16(loop_id);
-			int_to_scsilun(lun, (struct scsi_lun *)&mrk24->lun);
-			host_to_fcp_swap(mrk24->lun, sizeof(mrk24->lun));
+		mrk24->nport_handle = cpu_to_le16(loop_id);
+		int_to_scsilun(lun, (struct scsi_lun *)&mrk24->lun);
+		host_to_fcp_swap(mrk24->lun, sizeof(mrk24->lun));
+		if (IS_QLA29XX(ha))
+			((struct mrk_entry_24xx_ext *)mrk24)->vp_index =
+			    cpu_to_le16(vha->vp_idx);
+		else
 			mrk24->vp_index = vha->vp_idx;
-		} else {
-			SET_TARGET_ID(ha, mrk->target, loop_id);
-			mrk->lun = cpu_to_le16((uint16_t)lun);
-		}
 	}
-
-	if (IS_FWI2_CAPABLE(ha))
-		mrk24->handle = QLA_SKIP_HANDLE;
-
-post:
+	mrk24->handle = QLA_SKIP_HANDLE;
 
 	wmb();
 
@@ -4057,16 +4032,31 @@ static int qla_get_iocbs_resource(struct srb *sp)
 }
 
 static void
-qla_marker_iocb(srb_t *sp, struct mrk_entry_24xx *mrk)
+qla_marker_iocb(srb_t *sp, void *pkt)
 {
+	struct qla_hw_data *ha = sp->vha->hw;
+	struct mrk_entry_24xx *mrk = pkt;
+
+	/*
+	 * mrk_entry_24xx_ext overlays mrk_entry_24xx through 'lun', so
+	 * the common-header writes go through the 24xx-typed pointer;
+	 * only vp_index (u8 in 24xx, __le16 in the ext layout) needs a
+	 * stride-aware branch.
+	 */
 	mrk->entry_type = MARKER_TYPE;
 	mrk->modifier = sp->u.iocb_cmd.u.tmf.modifier;
 	mrk->handle = make_handle(sp->qpair->req->id, sp->handle);
 	if (sp->u.iocb_cmd.u.tmf.modifier != MK_SYNC_ALL) {
-		mrk->nport_handle = cpu_to_le16(sp->u.iocb_cmd.u.tmf.loop_id);
-		int_to_scsilun(sp->u.iocb_cmd.u.tmf.lun, (struct scsi_lun *)&mrk->lun);
+		mrk->nport_handle =
+		    cpu_to_le16(sp->u.iocb_cmd.u.tmf.loop_id);
+		int_to_scsilun(sp->u.iocb_cmd.u.tmf.lun,
+		    (struct scsi_lun *)&mrk->lun);
 		host_to_fcp_swap(mrk->lun, sizeof(mrk->lun));
-		mrk->vp_index = sp->u.iocb_cmd.u.tmf.vp_index;
+		if (IS_QLA29XX(ha))
+			((struct mrk_entry_24xx_ext *)pkt)->vp_index =
+			    cpu_to_le16(sp->u.iocb_cmd.u.tmf.vp_index);
+		else
+			mrk->vp_index = sp->u.iocb_cmd.u.tmf.vp_index;
 	}
 }
 
