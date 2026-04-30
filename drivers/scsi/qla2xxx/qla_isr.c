@@ -19,7 +19,7 @@
 
 static void qla2x00_mbx_completion(scsi_qla_host_t *, uint16_t);
 static void qla2x00_status_entry(scsi_qla_host_t *, struct rsp_que *, void *);
-static void qla2x00_status_cont_entry(struct rsp_que *, sts_cont_entry_t *);
+static void qla2x00_status_cont_entry(struct rsp_que *, void *);
 static int qla2x00_error_entry(scsi_qla_host_t *, struct rsp_que *,
 	sts_entry_t *);
 static void qla27xx_process_purex_fpin(struct scsi_qla_host *vha,
@@ -231,8 +231,12 @@ int __qla_copy_purex_to_buffer(struct scsi_qla_host *vha,
 	void **pkt, struct rsp_que **rsp, u8 *buf, u32 buf_len)
 {
 	struct purex_entry_24xx *purex = *pkt;
+	struct qla_hw_data *ha = vha->hw;
 	struct rsp_que *rsp_q = *rsp;
 	sts_cont_entry_t *new_pkt;
+	sts_cont_entry_ext_t *new_pkt29;
+	uint8_t *data;
+	uint32_t data_sz;
 	uint16_t no_bytes = 0, total_bytes = 0, pending_bytes = 0;
 	uint16_t buffer_copy_offset = 0;
 	uint16_t entry_count_remaining;
@@ -271,21 +275,37 @@ int __qla_copy_purex_to_buffer(struct scsi_qla_host *vha,
 
 	do {
 		while ((total_bytes > 0) && (entry_count_remaining > 0)) {
-			new_pkt = (sts_cont_entry_t *)rsp_q->ring_ptr;
-			*pkt = new_pkt;
+			if (IS_QLA29XX(ha)) {
+				new_pkt29 = (sts_cont_entry_ext_t *)rsp_q->ring_ptr;
+				*pkt = new_pkt29;
 
-			if (new_pkt->entry_type != STATUS_CONT_TYPE) {
-				ql_log(ql_log_warn, vha, 0x507a,
-				    "Unexpected IOCB type, partial data 0x%x\n",
-				    buffer_copy_offset);
-				break;
+				if (new_pkt29->entry_type != STATUS_CONT_TYPE) {
+					ql_log(ql_log_warn, vha, 0x507a,
+					    "Unexpected IOCB type, partial data 0x%x\n",
+					    buffer_copy_offset);
+					break;
+				}
+				data = new_pkt29->data;
+				data_sz = sizeof(new_pkt29->data);
+			} else {
+				new_pkt = (sts_cont_entry_t *)rsp_q->ring_ptr;
+				*pkt = new_pkt;
+
+				if (new_pkt->entry_type != STATUS_CONT_TYPE) {
+					ql_log(ql_log_warn, vha, 0x507a,
+					    "Unexpected IOCB type, partial data 0x%x\n",
+					    buffer_copy_offset);
+					break;
+				}
+				data = new_pkt->data;
+				data_sz = sizeof(new_pkt->data);
 			}
 
 			qla_rsp_ring_advance(rsp_q);
-			no_bytes = (pending_bytes > sizeof(new_pkt->data)) ?
-			    sizeof(new_pkt->data) : pending_bytes;
+			no_bytes = (pending_bytes > data_sz) ?
+			    data_sz : pending_bytes;
 			if ((buffer_copy_offset + no_bytes) <= total_bytes) {
-				memcpy((buf + buffer_copy_offset), new_pkt->data,
+				memcpy((buf + buffer_copy_offset), data,
 				    no_bytes);
 				buffer_copy_offset += no_bytes;
 				pending_bytes -= no_bytes;
@@ -294,11 +314,16 @@ int __qla_copy_purex_to_buffer(struct scsi_qla_host *vha,
 				ql_log(ql_log_warn, vha, 0x5044,
 				    "Attempt to copy more that we got, optimizing..%x\n",
 				    buffer_copy_offset);
-				memcpy((buf + buffer_copy_offset), new_pkt->data,
+				memcpy((buf + buffer_copy_offset), data,
 				    total_bytes - buffer_copy_offset);
 			}
 
-			((response_t *)new_pkt)->signature = RESPONSE_PROCESSED;
+			if (IS_QLA29XX(ha))
+				((response_ext_t *)new_pkt29)->signature =
+				    RESPONSE_PROCESSED;
+			else
+				((response_t *)new_pkt)->signature =
+				    RESPONSE_PROCESSED;
 			/* flush signature */
 			wmb();
 		}
@@ -844,8 +869,10 @@ qla27xx_copy_multiple_pkt(struct scsi_qla_host *vha, void **pkt,
 {
 	struct purex_entry_24xx *purex = NULL;
 	struct pt_ls4_rx_unsol *purls = NULL;
+	struct qla_hw_data *ha = vha->hw;
 	struct rsp_que *rsp_q = *rsp;
 	sts_cont_entry_t *new_pkt;
+	sts_cont_entry_ext_t *new_pkt29;
 	uint16_t no_bytes = 0, total_bytes = 0, pending_bytes = 0;
 	uint16_t buffer_copy_offset = 0, payload_size = 0;
 	uint16_t entry_count, entry_count_remaining;
@@ -906,14 +933,26 @@ qla27xx_copy_multiple_pkt(struct scsi_qla_host *vha, void **pkt,
 				continue;
 			}
 
-			new_pkt = (sts_cont_entry_t *)rsp_q->ring_ptr;
-			*pkt = new_pkt;
+			if (IS_QLA29XX(ha)) {
+				new_pkt29 = (sts_cont_entry_ext_t *)rsp_q->ring_ptr;
+				*pkt = new_pkt29;
 
-			if (new_pkt->entry_type != STATUS_CONT_TYPE) {
-				ql_log(ql_log_warn, vha, 0x507a,
-				       "Unexpected IOCB type, partial data 0x%x\n",
-				       buffer_copy_offset);
-				break;
+				if (new_pkt29->entry_type != STATUS_CONT_TYPE) {
+					ql_log(ql_log_warn, vha, 0x507a,
+					       "Unexpected IOCB type, partial data 0x%x\n",
+					       buffer_copy_offset);
+					break;
+				}
+			} else {
+				new_pkt = (sts_cont_entry_t *)rsp_q->ring_ptr;
+				*pkt = new_pkt;
+
+				if (new_pkt->entry_type != STATUS_CONT_TYPE) {
+					ql_log(ql_log_warn, vha, 0x507a,
+					       "Unexpected IOCB type, partial data 0x%x\n",
+					       buffer_copy_offset);
+					break;
+				}
 			}
 
 			rsp_q->ring_index++;
@@ -923,11 +962,23 @@ qla27xx_copy_multiple_pkt(struct scsi_qla_host *vha, void **pkt,
 			} else {
 				rsp_q->ring_ptr++;
 			}
-			no_bytes = (pending_bytes > sizeof(new_pkt->data)) ?
-				sizeof(new_pkt->data) : pending_bytes;
+			if (IS_QLA29XX(ha)) {
+				no_bytes = (pending_bytes > sizeof(new_pkt29->data)) ?
+					   sizeof(new_pkt29->data) : pending_bytes;
+			} else {
+				no_bytes = (pending_bytes > sizeof(new_pkt->data)) ?
+					   sizeof(new_pkt->data) : pending_bytes;
+			}
 			if ((buffer_copy_offset + no_bytes) <= total_bytes) {
-				memcpy(((uint8_t *)iocb_pkt + buffer_copy_offset),
-				       new_pkt->data, no_bytes);
+				if (IS_QLA29XX(ha)) {
+					memcpy(((uint8_t *)iocb_pkt +
+						buffer_copy_offset), new_pkt29->data,
+						no_bytes);
+				} else {
+					memcpy(((uint8_t *)iocb_pkt +
+						buffer_copy_offset), new_pkt->data,
+						no_bytes);
+				}
 				buffer_copy_offset += no_bytes;
 				pending_bytes -= no_bytes;
 				--entry_count_remaining;
@@ -935,12 +986,22 @@ qla27xx_copy_multiple_pkt(struct scsi_qla_host *vha, void **pkt,
 				ql_log(ql_log_warn, vha, 0x5044,
 				       "Attempt to copy more that we got, optimizing..%x\n",
 				       buffer_copy_offset);
-				memcpy(((uint8_t *)iocb_pkt + buffer_copy_offset),
-				       new_pkt->data,
-				       total_bytes - buffer_copy_offset);
+				if (IS_QLA29XX(ha)) {
+					memcpy(((uint8_t *)iocb_pkt +
+						buffer_copy_offset), new_pkt29->data,
+						total_bytes - buffer_copy_offset);
+				} else {
+					memcpy(((uint8_t *)iocb_pkt +
+						buffer_copy_offset), new_pkt->data,
+						total_bytes - buffer_copy_offset);
+				}
 			}
 
-			((response_t *)new_pkt)->signature = RESPONSE_PROCESSED;
+			if (IS_QLA29XX(ha)) {
+				((response_ext_t *)new_pkt29)->signature = RESPONSE_PROCESSED;
+			} else {
+				((response_t *)new_pkt)->signature = RESPONSE_PROCESSED;
+			}
 			wmb();
 		}
 
@@ -2918,7 +2979,7 @@ static void qla2x00_process_response_entry(struct scsi_qla_host *vha,
 						sts22_entry->handle[cnt]);
 		break;
 	case STATUS_CONT_TYPE:
-		qla2x00_status_cont_entry(rsp, (sts_cont_entry_t *)pkt);
+		qla2x00_status_cont_entry(rsp, pkt);
 		break;
 	case MBX_IOCB_TYPE:
 		qla2x00_mbx_iocb_entry(vha, rsp->req, (struct mbx_entry *)pkt);
@@ -3682,7 +3743,7 @@ out:
  * Extended sense data.
  */
 static void
-qla2x00_status_cont_entry(struct rsp_que *rsp, sts_cont_entry_t *pkt)
+qla2x00_status_cont_entry(struct rsp_que *rsp, void *pkt)
 {
 	uint8_t	sense_sz = 0;
 	struct qla_hw_data *ha = rsp->hw;
@@ -3691,6 +3752,8 @@ qla2x00_status_cont_entry(struct rsp_que *rsp, sts_cont_entry_t *pkt)
 	struct scsi_cmnd *cp;
 	uint32_t sense_len;
 	uint8_t *sense_ptr;
+	uint8_t *data;
+	uint32_t data_sz;
 
 	if (!sp || !GET_CMD_SENSE_LEN(sp))
 		return;
@@ -3707,15 +3770,27 @@ qla2x00_status_cont_entry(struct rsp_que *rsp, sts_cont_entry_t *pkt)
 		return;
 	}
 
-	if (sense_len > sizeof(pkt->data))
-		sense_sz = sizeof(pkt->data);
+	if (IS_QLA29XX(ha)) {
+		sts_cont_entry_ext_t *pkt29 = pkt;
+
+		data = pkt29->data;
+		data_sz = sizeof(pkt29->data);
+	} else {
+		sts_cont_entry_t *sts_pkt = pkt;
+
+		data = sts_pkt->data;
+		data_sz = sizeof(sts_pkt->data);
+	}
+
+	if (sense_len > data_sz)
+		sense_sz = data_sz;
 	else
 		sense_sz = sense_len;
 
 	/* Move sense data. */
 	if (IS_FWI2_CAPABLE(ha))
-		host_to_fcp_swap(pkt->data, sizeof(pkt->data));
-	memcpy(sense_ptr, pkt->data, sense_sz);
+		host_to_fcp_swap(data, data_sz);
+	memcpy(sense_ptr, data, sense_sz);
 	ql_dump_buffer(ql_dbg_io + ql_dbg_buffer, vha, 0x302c,
 		sense_ptr, sense_sz);
 
@@ -3997,7 +4072,7 @@ process_err:
 			qla2x00_status_entry(vha, rsp, pkt);
 			break;
 		case STATUS_CONT_TYPE:
-			qla2x00_status_cont_entry(rsp, (sts_cont_entry_t *)pkt);
+			qla2x00_status_cont_entry(rsp, pkt);
 			break;
 		case VP_RPT_ID_IOCB_TYPE:
 			qla24xx_report_id_acquisition(vha,
