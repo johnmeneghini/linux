@@ -3407,6 +3407,7 @@ struct tsk_mgmt_cmd {
 	union {
 		struct tsk_mgmt_entry tsk;
 		struct sts_entry_24xx sts;
+		struct sts_entry_24xx_ext sts_ext;
 	} p;
 };
 
@@ -3417,6 +3418,7 @@ __qla24xx_issue_tmf(char *name, uint32_t type, struct fc_port *fcport,
 	int		rval, rval2;
 	struct tsk_mgmt_cmd *tsk;
 	struct sts_entry_24xx *sts;
+	struct sts_entry_24xx_ext *stsext;
 	dma_addr_t	tsk_dma;
 	scsi_qla_host_t *vha;
 	struct qla_hw_data *ha;
@@ -3460,6 +3462,7 @@ __qla24xx_issue_tmf(char *name, uint32_t type, struct fc_port *fcport,
 	}
 
 	sts = &tsk->p.sts;
+	stsext = &tsk->p.sts_ext;
 	rval = qla2x00_issue_iocb(vha, tsk, tsk_dma, 0);
 	if (rval != QLA_SUCCESS) {
 		ql_dbg(ql_dbg_mbx, vha, 0x1094,
@@ -3474,6 +3477,22 @@ __qla24xx_issue_tmf(char *name, uint32_t type, struct fc_port *fcport,
 		    "Failed to complete IOCB -- completion status (%x).\n",
 		    le16_to_cpu(sts->comp_status));
 		rval = QLA_FUNCTION_FAILED;
+	} else if (IS_QLA29XX(ha)) {
+		if (le16_to_cpu(stsext->u2.scsi_status) &
+		    SS_RESPONSE_INFO_LEN_VALID) {
+			if (le32_to_cpu(stsext->u2.rsp_data_len_ndma) < 4) {
+				ql_dbg(ql_dbg_mbx + ql_dbg_verbose, vha,
+				    0x1097,
+				    "Ignoring inconsistent data length -- not enough "
+				    "response info (%d).\n",
+				    le32_to_cpu(stsext->u2.rsp_data_len_ndma));
+			} else if (stsext->u2.data[3]) {
+				ql_dbg(ql_dbg_mbx, vha, 0x1098,
+				    "Failed to complete IOCB -- response (%x).\n",
+				    stsext->u2.data[3]);
+				rval = QLA_FUNCTION_FAILED;
+			}
+		}
 	} else if (le16_to_cpu(sts->scsi_status) &
 	    SS_RESPONSE_INFO_LEN_VALID) {
 		if (le32_to_cpu(sts->rsp_data_len) < 4) {
