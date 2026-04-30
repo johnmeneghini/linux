@@ -6106,12 +6106,26 @@ retry_lock:
 }
 
 static bool
-qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha,
-	struct purex_entry_24xx *purex)
+qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha, void *pkt)
 {
 	char fwstr[16];
-	u32 sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 | purex->s_id[0];
+	u32 sid;
+	__le16 nport_handle;
 	struct port_database_24xx *pdb;
+
+	if (IS_QLA29XX(vha->hw)) {
+		struct purex_entry_24xx_ext *purex = pkt;
+
+		sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 |
+		    purex->s_id[0];
+		nport_handle = purex->nport_handle;
+	} else {
+		struct purex_entry_24xx *purex = pkt;
+
+		sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 |
+		    purex->s_id[0];
+		nport_handle = purex->nport_handle;
+	}
 
 	/* Domain Controller is always logged-out. */
 	/* if RDP request is not from Domain Controller: */
@@ -6125,7 +6139,7 @@ qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha,
 		ql_dbg(ql_dbg_init, vha, 0x0181,
 		    "%s: Failed allocate pdb\n", __func__);
 	} else if (qla24xx_get_port_database(vha,
-				le16_to_cpu(purex->nport_handle), pdb)) {
+				le16_to_cpu(nport_handle), pdb)) {
 		ql_dbg(ql_dbg_init, vha, 0x0181,
 		    "%s: Failed get pdb sid=%x\n", __func__, sid);
 	} else if (pdb->current_login_state != PDS_PLOGI_COMPLETE &&
@@ -6165,8 +6179,7 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 			       struct purex_item *item)
 {
 	struct qla_hw_data *ha = vha->hw;
-	struct purex_entry_24xx *purex =
-	    (struct purex_entry_24xx *)&item->iocb;
+	void *purex_pkt = &item->iocb;
 	dma_addr_t rsp_els_dma;
 	dma_addr_t rsp_payload_dma;
 	dma_addr_t stat_dma;
@@ -6177,17 +6190,43 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	uint8_t *sfp = NULL;
 	uint16_t sfp_flags = 0;
 	uint rsp_payload_length = sizeof(*rsp_payload);
+	__le16 nport_handle;
+	__le32 rx_xchg_addr;
+	uint8_t *els_payload;
+	uint8_t s_id[3];
+	uint8_t vp_idx;
+	size_t purex_sz;
 	int rval;
 
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0180,
 	    "%s: Enter\n", __func__);
 
+	if (IS_QLA29XX(ha)) {
+		struct purex_entry_24xx_ext *purex = purex_pkt;
+
+		nport_handle = purex->nport_handle;
+		vp_idx = le16_to_cpu(purex->vp_idx);
+		rx_xchg_addr = purex->rx_xchg_addr;
+		memcpy(s_id, purex->s_id, sizeof(s_id));
+		els_payload = purex->els_frame_payload;
+		purex_sz = sizeof(*purex);
+	} else {
+		struct purex_entry_24xx *purex = purex_pkt;
+
+		nport_handle = purex->nport_handle;
+		vp_idx = purex->vp_idx;
+		rx_xchg_addr = purex->rx_xchg_addr;
+		memcpy(s_id, purex->s_id, sizeof(s_id));
+		els_payload = purex->els_frame_payload;
+		purex_sz = sizeof(*purex);
+	}
+
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0181,
 	    "-------- ELS REQ -------\n");
 	ql_dump_buffer(ql_dbg_init + ql_dbg_verbose, vha, 0x0182,
-	    purex, sizeof(*purex));
+	    purex_pkt, purex_sz);
 
-	if (qla25xx_rdp_rsp_reduce_size(vha, purex)) {
+	if (qla25xx_rdp_rsp_reduce_size(vha, purex_pkt)) {
 		rsp_payload_length =
 		    offsetof(typeof(*rsp_payload), optical_elmt_desc);
 		ql_dbg(ql_dbg_init, vha, 0x0181,
@@ -6223,17 +6262,17 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	rsp_els->sys_define = 0;
 	rsp_els->entry_status = 0;
 	rsp_els->handle = 0;
-	rsp_els->nport_handle = purex->nport_handle;
+	rsp_els->nport_handle = nport_handle;
 	rsp_els->tx_dsd_count = cpu_to_le16(1);
-	rsp_els->vp_index = purex->vp_idx;
+	rsp_els->vp_index = vp_idx;
 	rsp_els->sof_type = EST_SOFI3;
-	rsp_els->rx_xchg_address = purex->rx_xchg_addr;
+	rsp_els->rx_xchg_address = rx_xchg_addr;
 	rsp_els->rx_dsd_count = 0;
-	rsp_els->opcode = purex->els_frame_payload[0];
+	rsp_els->opcode = els_payload[0];
 
-	rsp_els->d_id[0] = purex->s_id[0];
-	rsp_els->d_id[1] = purex->s_id[1];
-	rsp_els->d_id[2] = purex->s_id[2];
+	rsp_els->d_id[0] = s_id[0];
+	rsp_els->d_id[1] = s_id[1];
+	rsp_els->d_id[2] = s_id[2];
 
 	rsp_els->control_flags = cpu_to_le16(EPD_ELS_ACC);
 	rsp_els->rx_byte_count = 0;
@@ -6255,14 +6294,14 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	rsp_payload->ls_req_info_desc.desc_len =
 	    cpu_to_be32(RDP_DESC_LEN(rsp_payload->ls_req_info_desc));
 	rsp_payload->ls_req_info_desc.req_payload_word_0 =
-	    cpu_to_be32p((uint32_t *)purex->els_frame_payload);
+	    cpu_to_be32p((uint32_t *)els_payload);
 
 	/* Link service Request Info Descriptor 2 */
 	rsp_payload->ls_req_info_desc2.desc_tag = cpu_to_be32(0x1);
 	rsp_payload->ls_req_info_desc2.desc_len =
 	    cpu_to_be32(RDP_DESC_LEN(rsp_payload->ls_req_info_desc2));
 	rsp_payload->ls_req_info_desc2.req_payload_word_0 =
-	    cpu_to_be32p((uint32_t *)purex->els_frame_payload);
+	    cpu_to_be32p((uint32_t *)els_payload);
 
 
 	rsp_payload->sfp_diag_desc.desc_tag = cpu_to_be32(0x10000);
@@ -8346,6 +8385,7 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(struct pt_ls4_request) != 64);
 	BUILD_BUG_ON(sizeof(struct pt_ls4_rx_unsol) != 64);
 	BUILD_BUG_ON(sizeof(struct purex_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct purex_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct qla2100_fw_dump) != 123634);
 	BUILD_BUG_ON(sizeof(struct qla2300_fw_dump) != 136100);
 	BUILD_BUG_ON(sizeof(struct qla24xx_fw_dump) != 37976);
