@@ -554,8 +554,8 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	unsigned long   flags;
 	uint32_t        *clr_ptr;
 	uint32_t        handle;
-	struct cmd_nvme *cmd_pkt;
-	struct cmd_nvme_ext *cmd_pkt_ext;
+	struct cmd_nvme *cmd_pkt = NULL;
+	struct cmd_nvme_ext *cmd_pkt_ext = NULL;
 	uint16_t        cnt, i;
 	uint16_t        req_cnt;
 	uint16_t        tot_dsds;
@@ -634,12 +634,44 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	req->cnt -= req_cnt;
 
 	/*
-	 * 29xx operates on the 128-byte extended IOCB ring via ring_ext_ptr;
-	 * the header layout of struct cmd_nvme is identical to the head of
-	 * struct cmd_nvme_ext through 'byte_count', so common field writes
-	 * below go through 'cmd_pkt'.  Divergent tail fields
-	 * (port_id/vp_index, DSD array) are handled via IS_QLA29XX() branches.
+	 * 29xx operates on the 128-byte extended IOCB ring; the header
+	 * layout of struct cmd_nvme is identical to the head of struct
+	 * cmd_nvme_ext through 'byte_count', so the common-field writes
+	 * below go through cmd_pkt regardless of stride.  Divergent tail
+	 * fields (port_id/vp_index, DSD array) are handled via
+	 * IS_QLA29XX(ha) branches.
+	 *
+	 * Enforce the layout contract at compile time so any future
+	 * change to either struct that breaks the common-header overlap
+	 * fails the build rather than silently corrupting IOCBs.
 	 */
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, entry_type) !=
+		     offsetof(struct cmd_nvme_ext, entry_type));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, handle) !=
+		     offsetof(struct cmd_nvme_ext, handle));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, nport_handle) !=
+		     offsetof(struct cmd_nvme_ext, nport_handle));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, timeout) !=
+		     offsetof(struct cmd_nvme_ext, timeout));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, dseg_count) !=
+		     offsetof(struct cmd_nvme_ext, dseg_count));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, nvme_rsp_dsd_len) !=
+		     offsetof(struct cmd_nvme_ext, nvme_rsp_dsd_len));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, rsvd) !=
+		     offsetof(struct cmd_nvme_ext, rsvd));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, control_flags) !=
+		     offsetof(struct cmd_nvme_ext, control_flags));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, nvme_cmnd_dseg_len) !=
+		     offsetof(struct cmd_nvme_ext, nvme_cmnd_dseg_len));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, nvme_cmnd_dseg_address) !=
+		     offsetof(struct cmd_nvme_ext, nvme_cmnd_dseg_address));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, nvme_rsp_dseg_address) !=
+		     offsetof(struct cmd_nvme_ext, nvme_rsp_dseg_address));
+	BUILD_BUG_ON(offsetof(struct cmd_nvme, byte_count) !=
+		     offsetof(struct cmd_nvme_ext, byte_count));
+	BUILD_BUG_ON(sizeof_field(struct cmd_nvme, byte_count) !=
+		     sizeof_field(struct cmd_nvme_ext, byte_count));
+
 	if (IS_QLA29XX(ha))
 		cmd_pkt = (struct cmd_nvme *)req->ring_ext_ptr;
 	else
@@ -655,11 +687,8 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 		memset(clr_ptr, 0, REQUEST_ENTRY_SIZE - 8);
 
 	cmd_pkt->entry_status = 0;
-
-	/* Update entry type to indicate Command NVME IOCB */
 	cmd_pkt->entry_type = COMMAND_NVME;
 
-	/* No data transfer how do we check buffer len == 0?? */
 	if (fd->io_dir == NVMEFC_FCP_READ) {
 		cmd_pkt->control_flags = cpu_to_le16(CF_READ_DATA);
 		qpair->counters.input_bytes += fd->payload_length;
@@ -684,18 +713,15 @@ static inline int qla2x00_start_nvme_mq(srb_t *sp)
 	if (sp->fcport->edif.enable && fd->io_dir != 0)
 		cmd_pkt->control_flags |= cpu_to_le16(CF_EN_EDIF);
 
-	/* Set BIT_13 of control flags for Async event */
 	if (vha->flags.nvme2_enabled &&
-	    cmd->sqe.common.opcode == nvme_admin_async_event) {
+	    cmd->sqe.common.opcode == nvme_admin_async_event)
 		cmd_pkt->control_flags |= cpu_to_le16(CF_ADMIN_ASYNC_EVENT);
-	}
 
-	/* Set NPORT-ID */
 	cmd_pkt->nport_handle = cpu_to_le16(sp->fcport->loop_id);
 	if (IS_QLA29XX(ha)) {
 		/*
-		 * 29xx extended NVMe IOCB has no port_id[] field; vp_index is a
-		 * 9-bit __le16 (see CMD_EXT_VP_INDEX_MASK).
+		 * 29xx extended NVMe IOCB has no port_id[] field; vp_index is
+		 * a 9-bit __le16 (see CMD_EXT_VP_INDEX_MASK).
 		 */
 		cmd_pkt_ext->vp_index = cpu_to_le16(sp->fcport->vha->vp_idx);
 	} else {
