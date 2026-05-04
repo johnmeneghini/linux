@@ -4011,38 +4011,77 @@ static void qla2x00_send_notify_ack_iocb(srb_t *sp,
 }
 
 /*
- * Build NVME LS request
+ * Build NVME LS request.
+ *
+ * cmd_pkt points at either struct pt_ls4_request (24xx, 64B) or
+ * struct pt_ls4_request_ext (29xx, 128B).  vp_index width, the dsd[]
+ * base, and rx_/tx_byte_count placement differ between layouts, so we
+ * branch on IS_QLA29XX(ha).
  */
 static void
-qla_nvme_ls(srb_t *sp, struct pt_ls4_request *cmd_pkt)
+qla_nvme_ls(srb_t *sp, void *cmd_pkt)
 {
-	struct srb_iocb *nvme;
+	struct srb_iocb *nvme = &sp->u.iocb_cmd;
+	struct qla_hw_data *ha = sp->vha->hw;
 
-	nvme = &sp->u.iocb_cmd;
-	cmd_pkt->entry_type = PT_LS4_REQUEST;
-	cmd_pkt->entry_count = 1;
-	cmd_pkt->timeout = cpu_to_le16(nvme->u.nvme.timeout_sec);
-	cmd_pkt->vp_index = sp->fcport->vha->vp_idx;
+	if (IS_QLA29XX(ha)) {
+		struct pt_ls4_request_ext *pkt = cmd_pkt;
 
-	if (sp->unsol_rsp) {
-		cmd_pkt->control_flags =
+		pkt->entry_type = PT_LS4_REQUEST;
+		pkt->entry_count = 1;
+		pkt->timeout = cpu_to_le16(nvme->u.nvme.timeout_sec);
+		pkt->vp_index = cpu_to_le16(sp->fcport->vha->vp_idx);
+
+		if (sp->unsol_rsp) {
+			pkt->control_flags =
 				cpu_to_le16(CF_LS4_RESPONDER << CF_LS4_SHIFT);
-		cmd_pkt->nport_handle = nvme->u.nvme.nport_handle;
-		cmd_pkt->exchange_address = nvme->u.nvme.exchange_address;
-	} else {
-		cmd_pkt->control_flags =
+			pkt->nport_handle = nvme->u.nvme.nport_handle;
+			pkt->exchange_address = nvme->u.nvme.exchange_address;
+		} else {
+			pkt->control_flags =
 				cpu_to_le16(CF_LS4_ORIGINATOR << CF_LS4_SHIFT);
-		cmd_pkt->nport_handle = cpu_to_le16(sp->fcport->loop_id);
-		cmd_pkt->rx_dseg_count = cpu_to_le16(1);
-		cmd_pkt->rx_byte_count = nvme->u.nvme.rsp_len;
-		cmd_pkt->dsd[1].length  = nvme->u.nvme.rsp_len;
-		put_unaligned_le64(nvme->u.nvme.rsp_dma, &cmd_pkt->dsd[1].address);
-	}
+			pkt->nport_handle = cpu_to_le16(sp->fcport->loop_id);
+			pkt->rx_dseg_count = cpu_to_le16(1);
+			pkt->rx_byte_count = nvme->u.nvme.rsp_len;
+			pkt->dsd[1].length = nvme->u.nvme.rsp_len;
+			put_unaligned_le64(nvme->u.nvme.rsp_dma,
+					   &pkt->dsd[1].address);
+		}
 
-	cmd_pkt->tx_dseg_count = cpu_to_le16(1);
-	cmd_pkt->tx_byte_count = nvme->u.nvme.cmd_len;
-	cmd_pkt->dsd[0].length = nvme->u.nvme.cmd_len;
-	put_unaligned_le64(nvme->u.nvme.cmd_dma, &cmd_pkt->dsd[0].address);
+		pkt->tx_dseg_count = cpu_to_le16(1);
+		pkt->tx_byte_count = nvme->u.nvme.cmd_len;
+		pkt->dsd[0].length = nvme->u.nvme.cmd_len;
+		put_unaligned_le64(nvme->u.nvme.cmd_dma, &pkt->dsd[0].address);
+
+	} else {
+		struct pt_ls4_request *pkt = cmd_pkt;
+
+		pkt->entry_type = PT_LS4_REQUEST;
+		pkt->entry_count = 1;
+		pkt->timeout = cpu_to_le16(nvme->u.nvme.timeout_sec);
+		pkt->vp_index = sp->fcport->vha->vp_idx;
+
+		if (sp->unsol_rsp) {
+			pkt->control_flags =
+				cpu_to_le16(CF_LS4_RESPONDER << CF_LS4_SHIFT);
+			pkt->nport_handle = nvme->u.nvme.nport_handle;
+			pkt->exchange_address = nvme->u.nvme.exchange_address;
+		} else {
+			pkt->control_flags =
+				cpu_to_le16(CF_LS4_ORIGINATOR << CF_LS4_SHIFT);
+			pkt->nport_handle = cpu_to_le16(sp->fcport->loop_id);
+			pkt->rx_dseg_count = cpu_to_le16(1);
+			pkt->rx_byte_count = nvme->u.nvme.rsp_len;
+			pkt->dsd[1].length = nvme->u.nvme.rsp_len;
+			put_unaligned_le64(nvme->u.nvme.rsp_dma,
+					   &pkt->dsd[1].address);
+		}
+
+		pkt->tx_dseg_count = cpu_to_le16(1);
+		pkt->tx_byte_count = nvme->u.nvme.cmd_len;
+		pkt->dsd[0].length = nvme->u.nvme.cmd_len;
+		put_unaligned_le64(nvme->u.nvme.cmd_dma, &pkt->dsd[0].address);
+	}
 }
 
 static void
