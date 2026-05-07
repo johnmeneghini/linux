@@ -78,6 +78,31 @@ qla29xx_calc_iocbs(scsi_qla_host_t *vha, uint16_t dsds, uint8_t iocb_dsds)
 	return iocbs;
 }
 
+/**
+ * qla_req_entry_size() - request-ring entry stride.
+ * @ha: HBA pointer
+ *
+ * Returns sizeof(request_ext_t) (128) on 29xx, sizeof(request_t) (64)
+ * everywhere else.
+ */
+static inline size_t
+qla_req_entry_size(struct qla_hw_data *ha)
+{
+	return IS_QLA29XX(ha) ? sizeof(request_ext_t) : sizeof(request_t);
+}
+
+/**
+ * qla_rsp_entry_size() - response-ring entry stride.
+ * @ha: HBA pointer
+ *
+ * Counterpart of qla_req_entry_size() for the response ring.
+ */
+static inline size_t
+qla_rsp_entry_size(struct qla_hw_data *ha)
+{
+	return IS_QLA29XX(ha) ? sizeof(response_ext_t) : sizeof(response_t);
+}
+
 static inline void
 qla2x00_poll(struct rsp_que *rsp)
 {
@@ -458,6 +483,54 @@ qla_rsp_ring_rewind_to(struct rsp_que *rsp, response_t *pkt, uint16_t idx)
 	rsp->ring_index = idx;
 	if (rsp->hw && IS_QLA29XX(rsp->hw))
 		rsp->ring_ext_ptr = (response_ext_t *)pkt;
+}
+
+/**
+ * qla_req_ring_slot() - return the current request-ring producer slot.
+ * @ha: HBA pointer
+ * @req: request queue
+ *
+ * On 29xx the firmware-visible ring uses 128-byte-strided entries
+ * referenced by ring_ext_ptr; on earlier adapters the 64-byte ring
+ * referenced by ring_ptr is used.  The returned pointer is
+ * layout-compatible with request_t for common header writes; callers
+ * needing 29xx-specific fields should cast to request_ext_t.
+ */
+static inline void *
+qla_req_ring_slot(struct qla_hw_data *ha, struct req_que *req)
+{
+	return IS_QLA29XX(ha) ? (void *)req->ring_ext_ptr
+			      : (void *)req->ring_ptr;
+}
+
+/**
+ * qla_req_ring_advance() - advance request-ring producer pointer.
+ * @ha: HBA pointer
+ * @req: request queue
+ *
+ * Mirrors qla_rsp_ring_advance().  Does NOT publish the new producer
+ * index to firmware; callers that need to do so should follow with a
+ * wrt_reg_dword or qla_83xx_start_iocbs().
+ */
+static inline void
+qla_req_ring_advance(struct qla_hw_data *ha, struct req_que *req)
+{
+	req->ring_index++;
+	if (IS_QLA29XX(ha)) {
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ext_ptr = req->ring_ext;
+		} else {
+			req->ring_ext_ptr++;
+		}
+	} else {
+		if (req->ring_index == req->length) {
+			req->ring_index = 0;
+			req->ring_ptr = req->ring;
+		} else {
+			req->ring_ptr++;
+		}
+	}
 }
 
 static inline int
