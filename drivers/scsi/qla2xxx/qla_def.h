@@ -337,6 +337,7 @@ static inline void wrt_reg_dword(volatile __le32 __iomem *addr, u32 data)
 
 #define MAX_CMDSZ	16		/* SCSI maximum CDB size. */
 #include "qla_fw.h"
+#include "qla_fw29.h"
 
 struct name_list_extended {
 	struct get_name_list_extended *l;
@@ -1278,6 +1279,7 @@ static inline bool qla2xxx_is_valid_mbs(unsigned int mbs)
 #define MBC_LOAD_RISC_RAM		9	/* Load RAM command. */
 #define MBC_DUMP_RISC_RAM		0xa	/* Dump RAM command. */
 #define MBC_SECURE_FLASH_UPDATE		0xa	/* Secure Flash Update(28xx) */
+#define MBC_RD_WR_FLASH			0xa	/* Read/write Dword/block Flash(29xx) */
 #define MBC_LOAD_RISC_RAM_EXTENDED	0xb	/* Load RAM extended. */
 #define MBC_DUMP_RISC_RAM_EXTENDED	0xc	/* Dump RAM extended. */
 #define MBC_WRITE_RAM_WORD_EXTENDED	0xd	/* Write RAM word extended */
@@ -1546,6 +1548,11 @@ typedef struct {
 #define PD_STATE_WAIT_PROCESS_LOGOUT_ACK	9
 #define PD_STATE_PORT_LOGOUT			10
 #define PD_STATE_WAIT_PORT_LOGOUT_ACK		11
+
+enum qla29xx_mpi_optrom_op {
+	QLA29XX_MPI_OP_DUMP,
+	QLA29XX_MPI_OP_LOAD,
+};
 
 
 #define QLA_ZIO_MODE_6		(BIT_2 | BIT_1)
@@ -1988,6 +1995,18 @@ typedef struct {
 #define RESPONSE_PROCESSED	0xDEADDEAD	/* Signature */
 } response_t;
 
+typedef struct {
+        uint8_t         entry_type;		/* Entry type. */
+        uint8_t         entry_count;		/* Entry count. */
+        uint8_t         sys_define;		/* System defined. */
+        uint8_t         entry_status;		/* Entry Status. */
+        uint32_t        handle;			/* System defined handle */
+        uint8_t         data[52];
+        uint32_t        signature;
+        uint8_t         reserved[64];
+#define RESPONSE_PROCESSED      0xDEADDEAD      /* Signature */
+} response_ext_t;
+
 /*
  * ISP queue - ATIO queue entry definition.
  */
@@ -2065,6 +2084,24 @@ typedef struct {
 	uint32_t byte_count;		/* Total byte count. */
 	struct dsd64 dsd[2];
 } cmd_a64_entry_t, request_t;
+
+typedef struct {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t sys_define;		/* System defined. */
+	uint8_t entry_status;		/* Entry Status. */
+	uint32_t handle;		/* System handle. */
+	target_id_t target;		/* SCSI ID */
+	__le16  lun;			/* SCSI LUN */
+	__le16  control_flags;		/* Control flags. */
+	uint16_t reserved_1;
+	__le16  timeout;		/* Command timeout. */
+	__le16  dseg_count;		/* Data segment count. */
+	uint8_t scsi_cdb[MAX_CMDSZ];	/* SCSI command words. */
+	uint32_t byte_count;		/* Total byte count. */
+	struct dsd64 dsd[2];
+	uint8_t reserved[64];
+} cmd_a64_entry_ext_t, request_ext_t;
 
 /*
  * ISP queue - continuation entry structure definition.
@@ -2324,6 +2361,38 @@ typedef struct {
 	uint8_t reserved_2[48];
 } mrk_entry_t;
 
+/* 29xx definitions */
+#define	STATUS_CONT_TYPE_0	0x10	/* Status continuation entry. */
+typedef struct {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t sys_define;		/* System defined. */
+	uint8_t entry_status;		/* Entry Status. */
+	uint8_t data[124];		/* data */
+} sts_cont_entry_ext_t;
+
+/*
+ * ISP queue - marker entry structure definition.
+ */
+typedef struct {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t handle_count;		/* Handle count. */
+	uint8_t entry_status;		/* Entry Status. */
+	uint32_t sys_define_2;		/* System defined. */
+	target_id_t target;		/* SCSI ID */
+	uint8_t modifier;		/* Modifier (7-0). */
+#define MK_SYNC_ID_LUN	0		/* Synchronize ID/LUN */
+#define MK_SYNC_ID	1		/* Synchronize ID */
+#define MK_SYNC_ALL	2		/* Synchronize all ID/LUN */
+#define MK_SYNC_LIP	3		/* Synchronize all ID/LUN, */
+					/* clear port changed, */
+					/* use sequence number. */
+	uint8_t reserved_1;
+	__le16	sequence_number;	/* Sequence number of event */
+	__le16	lun;			/* SCSI LUN */
+	uint8_t reserved_2[112];
+} mrk_entry_ext_t;
 /*
  * ISP queue - Management Server entry structure definition.
  */
@@ -2481,6 +2550,14 @@ struct imm_ntfy_from_isp {
 #define RESPONSE_ENTRY_SIZE	(sizeof(response_t))
 #define REQUEST_ENTRY_SIZE	(sizeof(request_t))
 
+
+/*
+ * 29xx (qla29xx) uses 128-byte ring entries for both request and response
+ * queues.  These macros give the size of an extended IOCB slot and are
+ * used when allocating from / zeroing the 29xx request ring via ring_ext_ptr.
+ */
+#define RESPONSE_ENTRY_SIZE_EXT (sizeof(response_ext_t))
+#define REQUEST_ENTRY_SIZE_EXT  (sizeof(request_ext_t))
 
 
 /*
@@ -3503,6 +3580,11 @@ struct isp_operations {
 	int (*write_optrom)(struct scsi_qla_host *, void *, uint32_t,
 		uint32_t);
 
+	void *(*read_optrom_region)(struct scsi_qla_host *, uint16_t,
+		uint16_t, void *, uint32_t, uint32_t);
+	int (*write_optrom_region)(struct scsi_qla_host *, uint16_t,
+		uint16_t, void *, uint32_t, uint32_t);
+
 	int (*get_flash_version) (struct scsi_qla_host *, void *);
 	int (*start_scsi) (srb_t *);
 	int (*start_scsi_mq) (srb_t *);
@@ -3528,7 +3610,6 @@ struct isp_operations {
 #define QLA_MIDX_DEFAULT	0
 #define QLA_MIDX_RSP_Q		1
 #define QLA_PCI_MSIX_CONTROL	0xa2
-#define QLA_83XX_PCI_MSIX_CONTROL	0x92
 
 struct scsi_qla_host;
 
@@ -3737,6 +3818,14 @@ struct rsp_que {
 	dma_addr_t  dma;
 	response_t *ring;
 	response_t *ring_ptr;
+	/*
+	 * 29xx extended IOCB ring (128-byte entries) aliases of ring/ring_ptr.
+	 * Allocated when IS_QLA29XX(ha); set up at queue-init time to point at
+	 * the same DMA memory as 'ring' but typed for the 29xx stride.  24xx
+	 * code paths walk via ring_ptr; 29xx paths walk via ring_ext_ptr.
+	 */
+	response_ext_t *ring_ext;
+	response_ext_t *ring_ext_ptr;
 	__le32	__iomem *rsp_q_in;	/* FWI2-capable only. */
 	__le32	__iomem *rsp_q_out;
 	uint16_t  ring_index;
@@ -3764,6 +3853,14 @@ struct req_que {
 	dma_addr_t  dma;
 	request_t *ring;
 	request_t *ring_ptr;
+	/*
+	 * 29xx extended IOCB ring (128-byte entries) aliases of ring/ring_ptr.
+	 * Allocated when IS_QLA29XX(ha); set up at queue-init time to point at
+	 * the same DMA memory as 'ring' but typed for the 29xx stride.  24xx
+	 * code paths must not run on 29xx HW, and vice-versa.
+	 */
+	request_ext_t *ring_ext;
+	request_ext_t *ring_ext_ptr;
 	__le32	__iomem *req_q_in;	/* FWI2-capable only. */
 	__le32	__iomem *req_q_out;
 	uint16_t  ring_index;
@@ -4171,6 +4268,7 @@ struct qla_hw_data {
 #define EEH_FLUSH_RDY  1
 #define EEH_FLUSH_DONE 2
 		uint32_t	secure_mcu:1;
+		uint32_t	valid_flt:1;
 	} flags;
 
 	uint16_t max_exchg;
@@ -4287,6 +4385,10 @@ struct qla_hw_data {
 #define PCI_DEVICE_ID_QLOGIC_ISP2089	0x2089
 #define PCI_DEVICE_ID_QLOGIC_ISP2281	0x2281
 #define PCI_DEVICE_ID_QLOGIC_ISP2289	0x2289
+#define PCI_DEVICE_ID_QLOGIC_ISP2099	0x2099
+#define PCI_DEVICE_ID_QLOGIC_ISP2299	0x2299
+#define PCI_DEVICE_ID_QLOGIC_ISP2091	0x2091
+#define PCI_DEVICE_ID_QLOGIC_ISP2291	0x2291
 
 	uint32_t	isp_type;
 #define DT_ISP2100                      BIT_0
@@ -4316,7 +4418,11 @@ struct qla_hw_data {
 #define DT_ISP2089			BIT_24
 #define DT_ISP2281			BIT_25
 #define DT_ISP2289			BIT_26
-#define DT_ISP_LAST			(DT_ISP2289 << 1)
+#define DT_ISP2299			BIT_27
+#define DT_ISP2099			BIT_28
+#define DT_ISP2091			BIT_29
+#define DT_ISP2291			BIT_30
+#define DT_ISP_LAST			((uint32_t)DT_ISP2291 << 1)
 
 	uint32_t	device_type;
 #define DT_T10_PI                       BIT_25
@@ -4353,6 +4459,10 @@ struct qla_hw_data {
 #define IS_QLA2261(ha)	(DT_MASK(ha) & DT_ISP2261)
 #define IS_QLA2081(ha)	(DT_MASK(ha) & DT_ISP2081)
 #define IS_QLA2281(ha)	(DT_MASK(ha) & DT_ISP2281)
+#define IS_QLA2299(ha)  (DT_MASK(ha) & DT_ISP2299)
+#define IS_QLA2099(ha)  (DT_MASK(ha) & DT_ISP2099)
+#define IS_QLA2091(ha)  (DT_MASK(ha) & DT_ISP2091)
+#define IS_QLA2291(ha)  (DT_MASK(ha) & DT_ISP2291)
 
 #define IS_QLA23XX(ha)  (IS_QLA2300(ha) || IS_QLA2312(ha) || IS_QLA2322(ha) || \
 			IS_QLA6312(ha) || IS_QLA6322(ha))
@@ -4363,6 +4473,9 @@ struct qla_hw_data {
 #define IS_QLA84XX(ha)  (IS_QLA8432(ha))
 #define IS_QLA27XX(ha)  (IS_QLA2071(ha) || IS_QLA2271(ha) || IS_QLA2261(ha))
 #define IS_QLA28XX(ha)	(IS_QLA2081(ha) || IS_QLA2281(ha))
+#define IS_QLA29XX(ha)	(IS_QLA2099(ha) || IS_QLA2299(ha) || \
+			 IS_QLA2091(ha) || IS_QLA2291(ha))
+
 #define IS_QLA24XX_TYPE(ha)     (IS_QLA24XX(ha) || IS_QLA54XX(ha) || \
 				IS_QLA84XX(ha))
 #define IS_CNA_CAPABLE(ha)	(IS_QLA81XX(ha) || IS_QLA82XX(ha) || \
@@ -4372,9 +4485,10 @@ struct qla_hw_data {
 				IS_QLA25XX(ha) || IS_QLA81XX(ha) || \
 				IS_QLA82XX(ha) || IS_QLA83XX(ha) || \
 				IS_QLA8044(ha) || IS_QLA27XX(ha) || \
-				IS_QLA28XX(ha))
+				IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_MSIX_NACK_CAPABLE(ha) (IS_QLA81XX(ha) || IS_QLA83XX(ha) || \
-				IS_QLA27XX(ha) || IS_QLA28XX(ha))
+				IS_QLA27XX(ha) || IS_QLA28XX(ha) || \
+				IS_QLA29XX(ha))
 #define IS_NOPOLLING_TYPE(ha)	(IS_QLA81XX(ha) && (ha)->flags.msix_enabled)
 #define IS_FAC_REQUIRED(ha)	(IS_QLA81XX(ha) || IS_QLA83XX(ha) || \
 				IS_QLA27XX(ha) || IS_QLA28XX(ha))
@@ -4390,9 +4504,9 @@ struct qla_hw_data {
 #define HAS_EXTENDED_IDS(ha)    ((ha)->device_type & DT_EXTENDED_IDS)
 #define IS_CT6_SUPPORTED(ha)	((ha)->device_type & DT_CT6_SUPPORTED)
 #define IS_MQUE_CAPABLE(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || \
-				 IS_QLA28XX(ha))
+				 IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_BIDI_CAPABLE(ha) \
-    (IS_QLA25XX(ha) || IS_QLA2031(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha))
+    (IS_QLA25XX(ha) || IS_QLA2031(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha) || IS_QLA29XX(ha))
 /* Bit 21 of fw_attributes decides the MCTP capabilities */
 #define IS_MCTP_CAPABLE(ha)	(IS_QLA2031(ha) && \
 				((ha)->fw_attributes_ext[0] & BIT_0))
@@ -4408,12 +4522,12 @@ struct qla_hw_data {
 	(QLA_NVME_IOS(_sp) && QLA_ABTS_FW_ENABLED(_sp->fcport->vha->hw))
 
 #define IS_PI_UNINIT_CAPABLE(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || \
-					 IS_QLA28XX(ha))
+					 IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_PI_IPGUARD_CAPABLE(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || \
-					 IS_QLA28XX(ha))
+					 IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_PI_DIFB_DIX0_CAPABLE(ha)	(0)
 #define IS_PI_SPLIT_DET_CAPABLE_HBA(ha)	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || \
-					IS_QLA28XX(ha))
+					IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_PI_SPLIT_DET_CAPABLE(ha)	(IS_PI_SPLIT_DET_CAPABLE_HBA(ha) && \
     (((ha)->fw_attributes_h << 16 | (ha)->fw_attributes) & BIT_22))
 #define IS_ATIO_MSIX_CAPABLE(ha) (IS_QLA83XX(ha) || IS_QLA27XX(ha) || \
@@ -4452,6 +4566,7 @@ struct qla_hw_data {
 	uint16_t	vpd_size;
 	uint16_t	vpd_base;
 	void		*vpd;
+	struct qla_flash_memo_block *fiv;
 
 	uint16_t	loop_reset_delay;
 	uint8_t		retry_count;
@@ -4483,6 +4598,8 @@ struct qla_hw_data {
 
 	struct qla_flt_header *flt;
 	dma_addr_t	flt_dma;
+	struct qla_flash_layout *flt_data;
+	uint32_t	fw_dump_tmplt_len;
 
 #define XGMAC_DATA_SIZE	4096
 	void		*xgmac_data;
@@ -4706,6 +4823,9 @@ struct qla_hw_data {
 	uint32_t	fdt_unprotect_sec_cmd;
 	uint32_t	fdt_protect_sec_cmd;
 	uint32_t	fdt_wrt_sts_reg_cmd;
+
+#define QLA_SEGMENT_LENGTH      0x25000
+	uint32_t        flt_segment_length;
 
 	struct {
 		uint32_t	flt_region_flt;
@@ -5333,6 +5453,14 @@ static inline bool qla_vha_mark_busy(scsi_qla_host_t *vha)
 /*
  * Flash support definitions
  */
+#define check_and_set_mbc_bits(bopt, dopt, bit_to_check, bit_to_set) {	\
+	if (bopt & bit_to_check)			\
+		dopt |= bit_to_set;			\
+}
+
+#define SET_FW_BIT(__opts, bit) ((__opts) |= (bit))
+#define CLEAR_FW_BIT(__opts, bit) ((__opts) &= ~(bit))
+
 #define OPTROM_SIZE_2300	0x20000
 #define OPTROM_SIZE_2322	0x100000
 #define OPTROM_SIZE_24XX	0x100000
@@ -5474,9 +5602,9 @@ struct sff_8247_a0 {
 /* BPM -- Buffer Plus Management support. */
 #define IS_BPM_CAPABLE(ha) \
 	(IS_QLA25XX(ha) || IS_QLA81XX(ha) || IS_QLA83XX(ha) || \
-	 IS_QLA27XX(ha) || IS_QLA28XX(ha))
+	 IS_QLA27XX(ha) || IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_BPM_RANGE_CAPABLE(ha) \
-	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha))
+	(IS_QLA83XX(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha) || IS_QLA29XX(ha))
 #define IS_BPM_ENABLED(vha) \
 	(ql2xautodetectsfp && !vha->vp_idx && IS_BPM_CAPABLE(vha->hw))
 
@@ -5597,4 +5725,9 @@ struct ql_vnd_tgt_stats_resp {
 	(!_fcport || IS_SESSION_DELETED(_fcport) || atomic_read(&_fcport->state) != FCS_ONLINE || \
 	!_fcport->vha->hw->flags.fw_started)
 
+#define is_flash_read(_opt)	\
+	(!(_opt & BIT_9) && !(_opt & BIT_6))
+
+#define is_flash_write(_opt)	\
+	(!(_opt & BIT_9) && (_opt & BIT_6))
 #endif

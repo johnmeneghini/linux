@@ -429,7 +429,8 @@ static void qla_init_base_qpair(struct scsi_qla_host *vha, struct req_que *req,
 	qla_cpu_update(rsp->qpair, raw_smp_processor_id());
 	ha->base_qpair->pdev = ha->pdev;
 
-	if (IS_QLA27XX(ha) || IS_QLA83XX(ha) || IS_QLA28XX(ha))
+	if (IS_QLA27XX(ha) || IS_QLA83XX(ha) || IS_QLA28XX(ha) ||
+	    IS_QLA29XX(ha))
 		ha->base_qpair->reqq_start_iocbs = qla_83xx_start_iocbs;
 }
 
@@ -501,6 +502,8 @@ fail_req_map:
 
 static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 {
+	size_t req_entry_size = qla_req_entry_size(ha);
+
 	if (IS_QLAFX00(ha)) {
 		if (req && req->ring_fx00)
 			dma_free_coherent(&ha->pdev->dev,
@@ -508,8 +511,8 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 			    req->ring_fx00, req->dma_fx00);
 	} else if (req && req->ring)
 		dma_free_coherent(&ha->pdev->dev,
-		(req->length + 1) * sizeof(request_t),
-		req->ring, req->dma);
+		    (req->length + 1) * req_entry_size,
+		    req->ring, req->dma);
 
 	if (req)
 		kfree(req->outstanding_cmds);
@@ -519,6 +522,8 @@ static void qla2x00_free_req_que(struct qla_hw_data *ha, struct req_que *req)
 
 static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 {
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
+
 	if (IS_QLAFX00(ha)) {
 		if (rsp && rsp->ring_fx00)
 			dma_free_coherent(&ha->pdev->dev,
@@ -526,8 +531,8 @@ static void qla2x00_free_rsp_que(struct qla_hw_data *ha, struct rsp_que *rsp)
 			    rsp->ring_fx00, rsp->dma_fx00);
 	} else if (rsp && rsp->ring) {
 		dma_free_coherent(&ha->pdev->dev,
-		(rsp->length + 1) * sizeof(response_t),
-		rsp->ring, rsp->dma);
+		    (rsp->length + 1) * rsp_entry_size,
+		    rsp->ring, rsp->dma);
 	}
 	kfree(rsp);
 }
@@ -2153,8 +2158,6 @@ iospace_error_exit:
 static int
 qla83xx_iospace_config(struct qla_hw_data *ha)
 {
-	uint16_t msix;
-
 	if (pci_request_selected_regions(ha->pdev, ha->bars,
 	    QLA2XXX_DRIVER_NAME)) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x0117,
@@ -2204,9 +2207,8 @@ qla83xx_iospace_config(struct qla_hw_data *ha)
 			pci_resource_len(ha->pdev, 2));
 	if (ha->msixbase) {
 		/* Read MSIX vector size of the board */
-		pci_read_config_word(ha->pdev,
-		    QLA_83XX_PCI_MSIX_CONTROL, &msix);
-		ha->msix_count = (msix & PCI_MSIX_FLAGS_QSIZE)  + 1;
+		ha->msix_count = pci_msix_vec_count(ha->pdev);
+
 		/*
 		 * By default, driver uses at least two msix vectors
 		 * (default & rspq)
@@ -2633,6 +2635,47 @@ static struct isp_operations qla27xx_isp_ops = {
 	.initialize_adapter	= qla2x00_initialize_adapter,
 };
 
+static struct isp_operations qla29xx_isp_ops = {
+	.pci_config		= qla25xx_pci_config,
+	.reset_chip		= qla24xx_reset_chip,
+	.chip_diag		= qla24xx_chip_diag,
+	.config_rings		= qla24xx_config_rings,
+	.reset_adapter		= qla24xx_reset_adapter,
+	.nvram_config		= qla81xx_nvram_config,
+	.update_fw_options	= qla24xx_update_fw_options,
+	.load_risc		= qla29xx_load_risc,
+	.pci_info_str		= qla24xx_pci_info_str,
+	.fw_version_str		= qla24xx_fw_version_str,
+	.intr_handler		= qla24xx_intr_handler,
+	.enable_intrs		= qla24xx_enable_intrs,
+	.disable_intrs		= qla24xx_disable_intrs,
+	.abort_command		= qla24xx_abort_command,
+	.target_reset		= qla24xx_abort_target,
+	.lun_reset		= qla24xx_lun_reset,
+	.fabric_login		= qla24xx_login_fabric,
+	.fabric_logout		= qla24xx_fabric_logout,
+	.calc_req_entries	= NULL,
+	.build_iocbs		= NULL,
+	.prep_ms_iocb		= qla24xx_prep_ms_iocb,
+	.prep_ms_fdmi_iocb	= qla24xx_prep_ms_fdmi_iocb,
+	.read_nvram		= NULL,
+	.write_nvram		= NULL,
+	.fw_dump		= qla27xx_fwdump,
+	.mpi_fw_dump		= qla27xx_mpi_fwdump,
+	.beacon_on		= qla24xx_beacon_on,
+	.beacon_off		= qla24xx_beacon_off,
+	.beacon_blink		= qla83xx_beacon_blink,
+	.read_optrom		= NULL,
+	.write_optrom		= NULL,
+	.read_optrom_region	= qla29xx_read_optrom_data,
+	.write_optrom_region	= qla29xx_write_optrom_data,
+	.get_flash_version	= qla24xx_get_flash_version,
+	.start_scsi_mq		= qla2xxx_dif_start_scsi_mq,
+	.abort_isp		= qla2x00_abort_isp,
+	.iospace_config		= qla83xx_iospace_config,
+	.initialize_adapter	= qla2x00_initialize_adapter,
+};
+
 static inline void
 qla2x00_set_isp_flags(struct qla_hw_data *ha)
 {
@@ -2796,6 +2839,20 @@ qla2x00_set_isp_flags(struct qla_hw_data *ha)
 		ha->device_type |= DT_T10_PI;
 		ha->fw_srisc_address = RISC_START_ADDRESS_2400;
 		break;
+	case PCI_DEVICE_ID_QLOGIC_ISP2099:
+	case PCI_DEVICE_ID_QLOGIC_ISP2299:
+	case PCI_DEVICE_ID_QLOGIC_ISP2091:
+	case PCI_DEVICE_ID_QLOGIC_ISP2291:
+		ha->isp_type |= DT_ISP2299;
+		ha->isp_type |= DT_ISP2099;
+		ha->isp_type |= DT_ISP2091;
+		ha->isp_type |= DT_ISP2291;
+		ha->device_type |= DT_ZIO_SUPPORTED;
+		ha->device_type |= DT_FWI2;
+		ha->device_type |= DT_IIDMA;
+		ha->device_type |= DT_T10_PI;
+		ha->fw_srisc_address = RISC_START_ADDRESS_2400;
+		break;
 	}
 
 	if (IS_QLA82XX(ha))
@@ -2803,8 +2860,8 @@ qla2x00_set_isp_flags(struct qla_hw_data *ha)
 	else {
 		/* Get adapter physical port no from interrupt pin register. */
 		pci_read_config_byte(ha->pdev, PCI_INTERRUPT_PIN, &ha->port_no);
-		if (IS_QLA25XX(ha) || IS_QLA2031(ha) ||
-		    IS_QLA27XX(ha) || IS_QLA28XX(ha))
+		if (IS_QLA25XX(ha) || IS_QLA2031(ha) || IS_QLA27XX(ha) ||
+		    IS_QLA28XX(ha) || IS_QLA29XX(ha))
 			ha->port_no--;
 		else
 			ha->port_no = !(ha->port_no & 1);
@@ -2936,7 +2993,11 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2081 ||
 	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2281 ||
 	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2089 ||
-	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2289) {
+	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2289 ||
+	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2099 ||
+	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2299 ||
+	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2091 ||
+	    pdev->device == PCI_DEVICE_ID_QLOGIC_ISP2291) {
 		bars = pci_select_bars(pdev, IORESOURCE_MEM);
 		mem_only = 1;
 		ql_dbg_pci(ql_dbg_init, pdev, 0x0007,
@@ -2998,7 +3059,8 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* Set EEH reset type to fundamental if required by hba */
 	if (IS_QLA24XX(ha) || IS_QLA25XX(ha) || IS_QLA81XX(ha) ||
-	    IS_QLA83XX(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha))
+	    IS_QLA83XX(ha) || IS_QLA27XX(ha) || IS_QLA28XX(ha) ||
+	    IS_QLA29XX(ha))
 		pdev->needs_freset = 1;
 
 	ha->prev_topology = 0;
@@ -3195,6 +3257,23 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		ha->flash_data_off = FARX_ACCESS_FLASH_DATA_28XX;
 		ha->nvram_conf_off = ~0;
 		ha->nvram_data_off = ~0;
+	} else if (IS_QLA29XX(ha)) {
+		ha->portnum = PCI_FUNC(ha->pdev->devfn);
+		ha->max_fibre_devices = MAX_FIBRE_DEVICES_2400;
+		ha->mbx_count = MAILBOX_REGISTER_COUNT;
+		req_length = REQUEST_ENTRY_CNT_83XX;
+		rsp_length = RESPONSE_ENTRY_CNT_83XX;
+		ha->max_loop_id = SNS_LAST_LOOP_ID_2300;
+		ha->init_cb_size = sizeof(struct mid_init_cb_81xx);
+		ha->gid_list_info_size = 8;
+		ha->optrom_size = OPTROM_SIZE_28XX;
+		ha->nvram_npiv_size = QLA_MAX_VPORTS_QLA25XX;
+		ha->isp_ops = &qla29xx_isp_ops;
+		ha->flash_conf_off = ~0;
+		ha->flash_data_off = ~0;
+		ha->nvram_conf_off = ~0;
+		ha->nvram_data_off = ~0;
+		ha->flt_segment_length = QLA_SEGMENT_LENGTH;
 	}
 
 	ql_dbg_pci(ql_dbg_init, pdev, 0x001e,
@@ -3373,7 +3452,7 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	rsp->rsp_q_in = &ha->iobase->isp24.rsp_q_in;
 	rsp->rsp_q_out = &ha->iobase->isp24.rsp_q_out;
 	if (ha->mqenable || IS_QLA83XX(ha) || IS_QLA27XX(ha) ||
-	    IS_QLA28XX(ha)) {
+	    IS_QLA28XX(ha) || IS_QLA29XX(ha)) {
 		req->req_q_in = &ha->mqiobase->isp25mq.req_q_in;
 		req->req_q_out = &ha->mqiobase->isp25mq.req_q_out;
 		rsp->rsp_q_in = &ha->mqiobase->isp25mq.rsp_q_in;
@@ -3733,7 +3812,7 @@ qla2x00_shutdown(struct pci_dev *pdev)
 		qla2x00_disable_eft_trace(vha);
 
 	if (IS_QLA25XX(ha) ||  IS_QLA2031(ha) || IS_QLA27XX(ha) ||
-	    IS_QLA28XX(ha)) {
+	    IS_QLA28XX(ha) || IS_QLA29XX(ha)) {
 		if (ha->flags.fw_started)
 			qla2x00_abort_isp_cleanup(vha);
 	} else {
@@ -3898,7 +3977,7 @@ qla2x00_remove_one(struct pci_dev *pdev)
 		return;
 
 	if (IS_QLA25XX(ha) || IS_QLA2031(ha) || IS_QLA27XX(ha) ||
-	    IS_QLA28XX(ha)) {
+	    IS_QLA28XX(ha) ||IS_QLA29XX(ha)) {
 		if (ha->flags.fw_started)
 			qla2x00_abort_isp_cleanup(base_vha);
 	} else if (!IS_QLAFX00(ha)) {
@@ -4147,6 +4226,8 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 {
 	char	name[16];
 	int rc;
+	size_t req_entry_size = qla_req_entry_size(ha);
+	size_t rsp_entry_size = qla_rsp_entry_size(ha);
 
 	if (QLA_TGT_MODE_ENABLED() || EDIF_CAP(ha)) {
 		ha->vp_map = kzalloc_objs(struct qla_vp_map,
@@ -4176,7 +4257,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	if (!ha->srb_mempool)
 		goto fail_free_gid_list;
 
-	if (IS_P3P_TYPE(ha) || IS_QLA27XX(ha) || (ql2xsecenable && IS_QLA28XX(ha))) {
+	if (IS_P3P_TYPE(ha) || IS_QLA27XX(ha) || (ql2xsecenable && (IS_QLA28XX(ha) || IS_QLA29XX(ha)))) {
 		/* Allocate cache for CT6 Ctx. */
 		if (!ctx_cachep) {
 			ctx_cachep = kmem_cache_create("qla2xxx_ctx",
@@ -4210,7 +4291,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	    "init_cb=%p gid_list=%p, srb_mempool=%p s_dma_pool=%p.\n",
 	    ha->init_cb, ha->gid_list, ha->srb_mempool, ha->s_dma_pool);
 
-	if (IS_P3P_TYPE(ha) || ql2xenabledif || (IS_QLA28XX(ha) && ql2xsecenable)) {
+	if (IS_P3P_TYPE(ha) || ql2xenabledif || ((IS_QLA28XX(ha) || IS_QLA29XX(ha)) && ql2xsecenable)) {
 		ha->dl_dma_pool = dma_pool_create(name, &ha->pdev->dev,
 			DSD_LIST_DMA_POOL_SIZE, 8, 0);
 		if (!ha->dl_dma_pool) {
@@ -4342,12 +4423,16 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	}
 	(*req)->length = req_len;
 	(*req)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*req)->length + 1) * sizeof(request_t),
+		((*req)->length + 1) * req_entry_size,
 		&(*req)->dma, GFP_KERNEL);
 	if (!(*req)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x0029,
 		    "Failed to allocate memory for req_ring.\n");
 		goto fail_req_ring;
+	}
+	if (IS_QLA29XX(ha)) {
+		(*req)->ring_ext = (request_ext_t *)(*req)->ring;
+		(*req)->ring_ext_ptr = (*req)->ring_ext;
 	}
 	/* Allocate memory for response ring */
 	*rsp = kzalloc_obj(struct rsp_que);
@@ -4359,12 +4444,16 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	(*rsp)->hw = ha;
 	(*rsp)->length = rsp_len;
 	(*rsp)->ring = dma_alloc_coherent(&ha->pdev->dev,
-		((*rsp)->length + 1) * sizeof(response_t),
+		((*rsp)->length + 1) * rsp_entry_size,
 		&(*rsp)->dma, GFP_KERNEL);
 	if (!(*rsp)->ring) {
 		ql_log_pci(ql_log_fatal, ha->pdev, 0x002b,
 		    "Failed to allocate memory for rsp_ring.\n");
 		goto fail_rsp_ring;
+	}
+	if (IS_QLA29XX(ha)) {
+		(*rsp)->ring_ext = (response_ext_t *)(*rsp)->ring;
+		(*rsp)->ring_ext_ptr = (*rsp)->ring_ext;
 	}
 	(*req)->rsp = *rsp;
 	(*rsp)->req = *req;
@@ -4387,7 +4476,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 
 	/* Get consistent memory allocated for EX-INIT-CB. */
 	if (IS_CNA_CAPABLE(ha) || IS_QLA2031(ha) || IS_QLA27XX(ha) ||
-	    IS_QLA28XX(ha)) {
+	    IS_QLA28XX(ha) || IS_QLA29XX(ha)) {
 		ha->ex_init_cb = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL,
 		    &ha->ex_init_cb_dma);
 		if (!ha->ex_init_cb)
@@ -4397,7 +4486,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	}
 
 	/* Get consistent memory allocated for Special Features-CB. */
-	if (IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
+	if (IS_QLA27XX(ha) || IS_QLA28XX(ha) || IS_QLA29XX(ha)) {
 		ha->sf_init_cb = dma_pool_zalloc(ha->s_dma_pool, GFP_KERNEL,
 						&ha->sf_init_cb_dma);
 		if (!ha->sf_init_cb)
@@ -4446,6 +4535,14 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 		goto fail_flt_buffer;
 	}
 
+	ha->flt_data = vzalloc(sizeof(struct qla_flash_layout) +
+			(sizeof(struct qla_flt_region_data) * FLT_MAX_REGIONS));
+	if (!ha->flt_data) {
+		ql_dbg_pci(ql_dbg_init, ha->pdev, 0x001a,
+			   "Unable to allocate memory for mini FLT data.\n");
+		goto fail_flt;
+	}
+
 	/* allocate the purex dma pool */
 	ha->purex_dma_pool = dma_pool_create(name, &ha->pdev->dev,
 	    ELS_MAX_PAYLOAD, 8, 0);
@@ -4453,7 +4550,7 @@ qla2x00_mem_alloc(struct qla_hw_data *ha, uint16_t req_len, uint16_t rsp_len,
 	if (!ha->purex_dma_pool) {
 		ql_dbg_pci(ql_dbg_init, ha->pdev, 0x011b,
 		    "Unable to allocate purex_dma_pool.\n");
-		goto fail_flt;
+		goto fail_flt_data;
 	}
 
 	ha->elsrej.size = sizeof(struct fc_els_ls_rjt) + 16;
@@ -4486,6 +4583,9 @@ fail_lsrjt:
 			  ha->elsrej.c, ha->elsrej.cdma);
 fail_elsrej:
 	dma_pool_destroy(ha->purex_dma_pool);
+fail_flt_data:
+	vfree(ha->flt_data);
+	ha->flt_data = NULL;
 fail_flt:
 	dma_free_coherent(&ha->pdev->dev, sizeof(struct qla_flt_header) + FLT_REGIONS_SIZE,
 	    ha->flt, ha->flt_dma);
@@ -4504,16 +4604,18 @@ fail_sf_init_cb:
 fail_ex_init_cb:
 	kfree(ha->npiv_info);
 fail_npiv_info:
-	dma_free_coherent(&ha->pdev->dev, ((*rsp)->length + 1) *
-		sizeof(response_t), (*rsp)->ring, (*rsp)->dma);
+	dma_free_coherent(&ha->pdev->dev,
+		((*rsp)->length + 1) * rsp_entry_size,
+		(*rsp)->ring, (*rsp)->dma);
 	(*rsp)->ring = NULL;
 	(*rsp)->dma = 0;
 fail_rsp_ring:
 	kfree(*rsp);
 	*rsp = NULL;
 fail_rsp:
-	dma_free_coherent(&ha->pdev->dev, ((*req)->length + 1) *
-		sizeof(request_t), (*req)->ring, (*req)->dma);
+	dma_free_coherent(&ha->pdev->dev,
+		((*req)->length + 1) * req_entry_size,
+		(*req)->ring, (*req)->dma);
 	(*req)->ring = NULL;
 	(*req)->dma = 0;
 fail_req_ring:
@@ -4551,12 +4653,12 @@ fail_dma_pool:
 	}
 
 fail_dif_bundl_dma_pool:
-	if (IS_QLA82XX(ha) || ql2xenabledif) {
+	if (IS_QLA82XX(ha) || IS_QLA29XX(ha) || ql2xenabledif) {
 		dma_pool_destroy(ha->fcp_cmnd_dma_pool);
 		ha->fcp_cmnd_dma_pool = NULL;
 	}
 fail_dl_dma_pool:
-	if (IS_QLA82XX(ha) || ql2xenabledif) {
+	if (IS_QLA82XX(ha) || IS_QLA29XX(ha) || ql2xenabledif) {
 		dma_pool_destroy(ha->dl_dma_pool);
 		ha->dl_dma_pool = NULL;
 	}
@@ -4920,6 +5022,10 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 		    ha->flt, ha->flt_dma);
 	ha->flt = NULL;
 	ha->flt_dma = 0;
+
+	if (ha->flt_data)
+		vfree(ha->flt_data);
+	ha->flt_data = NULL;
 
 	if (ha->ms_iocb)
 		dma_pool_free(ha->s_dma_pool, ha->ms_iocb, ha->ms_iocb_dma);
@@ -6000,12 +6106,26 @@ retry_lock:
 }
 
 static bool
-qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha,
-	struct purex_entry_24xx *purex)
+qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha, void *pkt)
 {
 	char fwstr[16];
-	u32 sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 | purex->s_id[0];
+	u32 sid;
+	__le16 nport_handle;
 	struct port_database_24xx *pdb;
+
+	if (IS_QLA29XX(vha->hw)) {
+		struct purex_entry_24xx_ext *purex = pkt;
+
+		sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 |
+		    purex->s_id[0];
+		nport_handle = purex->nport_handle;
+	} else {
+		struct purex_entry_24xx *purex = pkt;
+
+		sid = purex->s_id[2] << 16 | purex->s_id[1] << 8 |
+		    purex->s_id[0];
+		nport_handle = purex->nport_handle;
+	}
 
 	/* Domain Controller is always logged-out. */
 	/* if RDP request is not from Domain Controller: */
@@ -6019,7 +6139,7 @@ qla25xx_rdp_rsp_reduce_size(struct scsi_qla_host *vha,
 		ql_dbg(ql_dbg_init, vha, 0x0181,
 		    "%s: Failed allocate pdb\n", __func__);
 	} else if (qla24xx_get_port_database(vha,
-				le16_to_cpu(purex->nport_handle), pdb)) {
+				le16_to_cpu(nport_handle), pdb)) {
 		ql_dbg(ql_dbg_init, vha, 0x0181,
 		    "%s: Failed get pdb sid=%x\n", __func__, sid);
 	} else if (pdb->current_login_state != PDS_PLOGI_COMPLETE &&
@@ -6059,8 +6179,7 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 			       struct purex_item *item)
 {
 	struct qla_hw_data *ha = vha->hw;
-	struct purex_entry_24xx *purex =
-	    (struct purex_entry_24xx *)&item->iocb;
+	void *purex_pkt = &item->iocb;
 	dma_addr_t rsp_els_dma;
 	dma_addr_t rsp_payload_dma;
 	dma_addr_t stat_dma;
@@ -6071,17 +6190,45 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	uint8_t *sfp = NULL;
 	uint16_t sfp_flags = 0;
 	uint rsp_payload_length = sizeof(*rsp_payload);
+	__le16 nport_handle;
+	__le32 rx_xchg_addr;
+	uint8_t *els_payload;
+	uint8_t s_id[3];
+	uint8_t vp_idx;
+	size_t purex_sz;
+	size_t rsp_els_sz;
+	void *rsp_els_pkt = NULL;
 	int rval;
 
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0180,
 	    "%s: Enter\n", __func__);
 
+	if (IS_QLA29XX(ha)) {
+		struct purex_entry_24xx_ext *purex = purex_pkt;
+
+		nport_handle = purex->nport_handle;
+		vp_idx = le16_to_cpu(purex->vp_idx);
+		rx_xchg_addr = purex->rx_xchg_addr;
+		memcpy(s_id, purex->s_id, sizeof(s_id));
+		els_payload = purex->els_frame_payload;
+		purex_sz = sizeof(*purex);
+	} else {
+		struct purex_entry_24xx *purex = purex_pkt;
+
+		nport_handle = purex->nport_handle;
+		vp_idx = purex->vp_idx;
+		rx_xchg_addr = purex->rx_xchg_addr;
+		memcpy(s_id, purex->s_id, sizeof(s_id));
+		els_payload = purex->els_frame_payload;
+		purex_sz = sizeof(*purex);
+	}
+
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0181,
 	    "-------- ELS REQ -------\n");
 	ql_dump_buffer(ql_dbg_init + ql_dbg_verbose, vha, 0x0182,
-	    purex, sizeof(*purex));
+	    purex_pkt, purex_sz);
 
-	if (qla25xx_rdp_rsp_reduce_size(vha, purex)) {
+	if (qla25xx_rdp_rsp_reduce_size(vha, purex_pkt)) {
 		rsp_payload_length =
 		    offsetof(typeof(*rsp_payload), optical_elmt_desc);
 		ql_dbg(ql_dbg_init, vha, 0x0181,
@@ -6089,13 +6236,19 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 		    rsp_payload_length);
 	}
 
-	rsp_els = dma_alloc_coherent(&ha->pdev->dev, sizeof(*rsp_els),
+	if (IS_QLA29XX(ha))
+		rsp_els_sz = sizeof(struct els_entry_24xx_ext);
+	else
+		rsp_els_sz = sizeof(struct els_entry_24xx);
+
+	rsp_els_pkt = dma_alloc_coherent(&ha->pdev->dev, rsp_els_sz,
 	    &rsp_els_dma, GFP_KERNEL);
-	if (!rsp_els) {
+	if (!rsp_els_pkt) {
 		ql_log(ql_log_warn, vha, 0x0183,
-		    "Failed allocate dma buffer ELS RSP.\n");
+		    "Failed to allocate dma buffer ELS RSP.\n");
 		goto dealloc;
 	}
+	rsp_els = rsp_els_pkt;
 
 	rsp_payload = dma_alloc_coherent(&ha->pdev->dev, sizeof(*rsp_payload),
 	    &rsp_payload_dma, GFP_KERNEL);
@@ -6117,17 +6270,25 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	rsp_els->sys_define = 0;
 	rsp_els->entry_status = 0;
 	rsp_els->handle = 0;
-	rsp_els->nport_handle = purex->nport_handle;
+	rsp_els->nport_handle = nport_handle;
 	rsp_els->tx_dsd_count = cpu_to_le16(1);
-	rsp_els->vp_index = purex->vp_idx;
-	rsp_els->sof_type = EST_SOFI3;
-	rsp_els->rx_xchg_address = purex->rx_xchg_addr;
+	rsp_els->rx_xchg_address = rx_xchg_addr;
 	rsp_els->rx_dsd_count = 0;
-	rsp_els->opcode = purex->els_frame_payload[0];
+	rsp_els->opcode = els_payload[0];
 
-	rsp_els->d_id[0] = purex->s_id[0];
-	rsp_els->d_id[1] = purex->s_id[1];
-	rsp_els->d_id[2] = purex->s_id[2];
+	if (IS_QLA29XX(ha)) {
+		struct els_entry_24xx_ext *ext = rsp_els_pkt;
+
+		ext->vp_index = vp_idx;
+		ext->sof_type = ELS_EXT_EST_SOFI3;
+	} else {
+		rsp_els->vp_index = vp_idx;
+		rsp_els->sof_type = EST_SOFI3;
+	}
+
+	rsp_els->d_id[0] = s_id[0];
+	rsp_els->d_id[1] = s_id[1];
+	rsp_els->d_id[2] = s_id[2];
 
 	rsp_els->control_flags = cpu_to_le16(EPD_ELS_ACC);
 	rsp_els->rx_byte_count = 0;
@@ -6149,14 +6310,14 @@ void qla24xx_process_purex_rdp(struct scsi_qla_host *vha,
 	rsp_payload->ls_req_info_desc.desc_len =
 	    cpu_to_be32(RDP_DESC_LEN(rsp_payload->ls_req_info_desc));
 	rsp_payload->ls_req_info_desc.req_payload_word_0 =
-	    cpu_to_be32p((uint32_t *)purex->els_frame_payload);
+	    cpu_to_be32p((uint32_t *)els_payload);
 
 	/* Link service Request Info Descriptor 2 */
 	rsp_payload->ls_req_info_desc2.desc_tag = cpu_to_be32(0x1);
 	rsp_payload->ls_req_info_desc2.desc_len =
 	    cpu_to_be32(RDP_DESC_LEN(rsp_payload->ls_req_info_desc2));
 	rsp_payload->ls_req_info_desc2.req_payload_word_0 =
-	    cpu_to_be32p((uint32_t *)purex->els_frame_payload);
+	    cpu_to_be32p((uint32_t *)els_payload);
 
 
 	rsp_payload->sfp_diag_desc.desc_tag = cpu_to_be32(0x10000);
@@ -6424,13 +6585,13 @@ send:
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0184,
 	    "-------- ELS RSP -------\n");
 	ql_dump_buffer(ql_dbg_init + ql_dbg_verbose, vha, 0x0185,
-	    rsp_els, sizeof(*rsp_els));
+	    rsp_els_pkt, rsp_els_sz);
 	ql_dbg(ql_dbg_init + ql_dbg_verbose, vha, 0x0186,
 	    "-------- ELS RSP PAYLOAD -------\n");
 	ql_dump_buffer(ql_dbg_init + ql_dbg_verbose, vha, 0x0187,
 	    rsp_payload, rsp_payload_length);
 
-	rval = qla2x00_issue_iocb(vha, rsp_els, rsp_els_dma, 0);
+	rval = qla2x00_issue_iocb(vha, rsp_els_pkt, rsp_els_dma, 0);
 
 	if (rval) {
 		ql_log(ql_log_warn, vha, 0x0188,
@@ -6454,9 +6615,9 @@ dealloc:
 	if (rsp_payload)
 		dma_free_coherent(&ha->pdev->dev, sizeof(*rsp_payload),
 		    rsp_payload, rsp_payload_dma);
-	if (rsp_els)
-		dma_free_coherent(&ha->pdev->dev, sizeof(*rsp_els),
-		    rsp_els, rsp_els_dma);
+	if (rsp_els_pkt)
+		dma_free_coherent(&ha->pdev->dev, rsp_els_sz,
+		    rsp_els_pkt, rsp_els_dma);
 }
 
 void
@@ -7616,6 +7777,7 @@ qla2x00_timer(struct timer_list *t)
 #define FW_ISP8031	9
 #define FW_ISP27XX	10
 #define FW_ISP28XX	11
+#define FW_ISP29XX	12
 
 #define FW_FILE_ISP21XX	"ql2100_fw.bin"
 #define FW_FILE_ISP22XX	"ql2200_fw.bin"
@@ -7629,6 +7791,7 @@ qla2x00_timer(struct timer_list *t)
 #define FW_FILE_ISP8031	"ql8300_fw.bin"
 #define FW_FILE_ISP27XX	"ql2700_fw.bin"
 #define FW_FILE_ISP28XX	"ql2800_fw.bin"
+#define FW_FILE_ISP29XX	"ql2900_fw.bin"
 
 
 static DEFINE_MUTEX(qla_fw_lock);
@@ -7646,6 +7809,7 @@ static struct fw_blob qla_fw_blobs[] = {
 	{ .name = FW_FILE_ISP8031, },
 	{ .name = FW_FILE_ISP27XX, },
 	{ .name = FW_FILE_ISP28XX, },
+	{ .name = FW_FILE_ISP29XX, },
 	{ .name = NULL, },
 };
 
@@ -7679,6 +7843,8 @@ qla2x00_request_firmware(scsi_qla_host_t *vha)
 		blob = &qla_fw_blobs[FW_ISP27XX];
 	} else if (IS_QLA28XX(ha)) {
 		blob = &qla_fw_blobs[FW_ISP28XX];
+	} else if (IS_QLA29XX(ha)) {
+		blob = &qla_fw_blobs[FW_ISP29XX];
 	} else {
 		return NULL;
 	}
@@ -8155,6 +8321,10 @@ static const struct pci_device_id qla2xxx_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2281) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2089) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2289) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2099) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2299) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2091) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP2291) },
 	{ 0 },
 };
 MODULE_DEVICE_TABLE(pci, qla2xxx_pci_tbl);
@@ -8187,20 +8357,25 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(cont_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(init_cb_t) != 96);
 	BUILD_BUG_ON(sizeof(mrk_entry_t) != 64);
+	BUILD_BUG_ON(sizeof(mrk_entry_ext_t) != 128);
 	BUILD_BUG_ON(sizeof(ms_iocb_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(request_t) != 64);
 	BUILD_BUG_ON(sizeof(struct abort_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct abort_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct abort_iocb_entry_fx00) != 64);
 	BUILD_BUG_ON(sizeof(struct abts_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct abts_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct access_chip_84xx) != 64);
 	BUILD_BUG_ON(sizeof(struct access_chip_rsp_84xx) != 64);
 	BUILD_BUG_ON(sizeof(struct cmd_bidir) != 64);
 	BUILD_BUG_ON(sizeof(struct cmd_nvme) != 64);
+	BUILD_BUG_ON(sizeof(struct cmd_nvme_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct cmd_type_6) != 64);
 	BUILD_BUG_ON(sizeof(struct cmd_type_7) != 64);
 	BUILD_BUG_ON(sizeof(struct cmd_type_7_fx00) != 64);
 	BUILD_BUG_ON(sizeof(struct cmd_type_crc_2) != 64);
 	BUILD_BUG_ON(sizeof(struct ct_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct ct_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct ct_fdmi1_hba_attributes) != 2604);
 	BUILD_BUG_ON(sizeof(struct ct_fdmi2_hba_attributes) != 4424);
 	BUILD_BUG_ON(sizeof(struct ct_fdmi2_port_attributes) != 4164);
@@ -8214,20 +8389,26 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(struct device_reg_82xx) != 1288);
 	BUILD_BUG_ON(sizeof(struct device_reg_fx00) != 216);
 	BUILD_BUG_ON(sizeof(struct els_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct els_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct els_sts_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct els_sts_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct fxdisc_entry_fx00) != 64);
 	BUILD_BUG_ON(sizeof(struct imm_ntfy_from_isp) != 64);
 	BUILD_BUG_ON(sizeof(struct init_cb_24xx) != 128);
 	BUILD_BUG_ON(sizeof(struct init_cb_81xx) != 128);
 	BUILD_BUG_ON(sizeof(struct logio_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct logio_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct mbx_entry) != 64);
 	BUILD_BUG_ON(sizeof(struct mid_init_cb_24xx) != 5252);
 	BUILD_BUG_ON(sizeof(struct mrk_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct mrk_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct nvram_24xx) != 512);
 	BUILD_BUG_ON(sizeof(struct nvram_81xx) != 512);
 	BUILD_BUG_ON(sizeof(struct pt_ls4_request) != 64);
+	BUILD_BUG_ON(sizeof(struct pt_ls4_request_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct pt_ls4_rx_unsol) != 64);
 	BUILD_BUG_ON(sizeof(struct purex_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct purex_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct qla2100_fw_dump) != 123634);
 	BUILD_BUG_ON(sizeof(struct qla2300_fw_dump) != 136100);
 	BUILD_BUG_ON(sizeof(struct qla24xx_fw_dump) != 37976);
@@ -8251,17 +8432,23 @@ qla2x00_module_init(void)
 	BUILD_BUG_ON(sizeof(struct rdp_rsp_payload) != 336);
 	BUILD_BUG_ON(sizeof(struct sns_cmd_pkt) != 2064);
 	BUILD_BUG_ON(sizeof(struct sts_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct sts_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct tsk_mgmt_entry) != 64);
+	BUILD_BUG_ON(sizeof(struct tsk_mgmt_entry_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct tsk_mgmt_entry_fx00) != 64);
 	BUILD_BUG_ON(sizeof(struct verify_chip_entry_84xx) != 64);
 	BUILD_BUG_ON(sizeof(struct verify_chip_rsp_84xx) != 52);
 	BUILD_BUG_ON(sizeof(struct vf_evfp_entry_24xx) != 56);
 	BUILD_BUG_ON(sizeof(struct vp_config_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct vp_config_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct vp_ctrl_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct vp_ctrl_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(struct vp_rpt_id_entry_24xx) != 64);
+	BUILD_BUG_ON(sizeof(struct vp_rpt_id_entry_24xx_ext) != 128);
 	BUILD_BUG_ON(sizeof(sts21_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(sts22_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(sts_cont_entry_t) != 64);
+	BUILD_BUG_ON(sizeof(sts_cont_entry_ext_t) != 128);
 	BUILD_BUG_ON(sizeof(sts_entry_t) != 64);
 	BUILD_BUG_ON(sizeof(sw_info_t) != 32);
 	BUILD_BUG_ON(sizeof(target_id_t) != 2);
@@ -8381,3 +8568,4 @@ MODULE_FIRMWARE(FW_FILE_ISP2300);
 MODULE_FIRMWARE(FW_FILE_ISP2322);
 MODULE_FIRMWARE(FW_FILE_ISP24XX);
 MODULE_FIRMWARE(FW_FILE_ISP25XX);
+MODULE_FIRMWARE(FW_FILE_ISP29XX);

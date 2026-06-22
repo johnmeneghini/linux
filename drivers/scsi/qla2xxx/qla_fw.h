@@ -1676,6 +1676,8 @@ struct qla_flt_location {
 #define FLT_REG_VPD_SEC_27XX_2	0xD8
 #define FLT_REG_VPD_SEC_27XX_3	0xDA
 #define FLT_REG_NVME_PARAMS_27XX	0x21
+#define FLT_REG_FMB_PRI		0xDF
+#define FLT_REG_FMB_SEC		0x124
 
 /* 28xx */
 #define FLT_REG_AUX_IMG_PRI_28XX	0x125
@@ -1694,6 +1696,10 @@ struct qla_flt_location {
 #define FLT_REG_PEP_SEC_28XX		0xF1
 #define FLT_REG_NVME_PARAMS_PRI_28XX	0x14E
 #define FLT_REG_NVME_PARAMS_SEC_28XX	0x179
+
+/* 29xx */
+#define FLT_REG_MINI_FLT		0x201
+#define FLT_REG_FW_DUMP_TMPLT		0x1A0
 
 struct qla_flt_region {
 	__le16	code;
@@ -1715,6 +1721,56 @@ struct qla_flt_header {
 #define FLT_REGION_SIZE		16
 #define FLT_MAX_REGIONS		0xFF
 #define FLT_REGIONS_SIZE	(FLT_REGION_SIZE * FLT_MAX_REGIONS)
+
+/* 29xx */
+#define FLT_HDR_VERSION		0x2
+
+struct qla_flt_region_header {
+	__le32	signature;
+	__le32	version;
+	__le32	length;
+	__le32	checksum;
+	__le16	region_count;
+	__le16	region_size;
+	__le32	segment_size;
+	__le32	res3;
+	__le32	res4;
+	__le32	res5;
+	__le32	res6;
+	__le32	res7;
+	__le32	res8;
+	__le32	res9;
+	__le32	res10;
+	__le32	res11;
+	__le32	res12;
+};
+
+struct qla_flt_region_data {
+	__le16	region_code;
+	__le16	reserved;
+	__le32	attribute;
+	__le32	image_length;
+	__le32	mbi_offset;
+	__le32	version;
+	__le32	card_type;
+	__le32	chip_revision;
+	__le32	res4;
+	__le32	res5;
+	__le32	res6;
+	__le32	res7;
+	__le32	res8;
+	__le32	res9;
+	__le32	res10;
+	__le32	res11;
+	__le32	res12;
+};
+
+struct qla_flash_layout {
+	struct qla_flt_region_header flt_header;
+	struct qla_flt_region_data region[];
+};
+
+#define FLT_DATA_MAX_REGIONS	0xFF
 
 /* Flash NPIV Configuration Table ********************************************/
 
@@ -2283,5 +2339,79 @@ struct qla_fcp_prio_cfg {
 #define FA_FLASH_LAYOUT_ADDR_28	(0x11000/4)
 
 #define NVRAM_DUAL_FCP_NVME_FLAG_OFFSET	0x196
+
+struct qla_fmb_version {
+	uint8_t major;
+	uint8_t minor;
+	uint8_t sub;
+	uint8_t build;
+};
+
+struct qla_fmb_upd_time {
+	uint16_t year;
+	uint8_t  month;
+	uint8_t  day;
+
+	uint8_t  hour;
+	uint8_t  minute;
+	uint8_t  second;
+	uint8_t  reserved;
+};
+
+struct qla_flash_memo_block {
+	int32_t  signature;	/* "FMBS" */
+#define QLFC_FMB_SIG 0x464D4253
+	uint32_t length;
+	uint32_t version;
+#define QLFC_FMB_VERSION 3
+	uint32_t checksum;
+	struct qla_fmb_version ffv_ver;
+	struct qla_fmb_version mbi_ver;
+	struct {
+		uint16_t year;
+		uint8_t  month;
+		uint8_t  day;
+		uint8_t  reserve[4];
+	} bld_time;
+	uint8_t tool_id[4];
+	struct qla_fmb_upd_time upd_time;
+	struct qla_fmb_version  tool_version;
+};
+
+#define TIM_DEST_ADDR	0xffffffff
+#define CHUNK_SIZE	0x10000
+
+#define TIM	0
+#define ARR1	1
+#define ARR2	2
+#define ARR3	3
+#define ARR4	4
+
+#define LD_FL_HEADER_SIGNATURE	0x46434F50
+#define LD_FL_HEADER_VERSION	0x01
+#define LD_FL_HEADER_SIZE	(0x14 * 4)
+
+struct fcop_header {
+	__u32 signature;
+	__u32 header_length;
+	__u32 header_version;
+	__u32 segment_size;
+	__u32 tim_length;
+	__u32 fc_major_version;
+	__u32 fc_minor_version;
+	__u32 fc_subminor_version;
+	__u32 array1_length;
+	__u32 array1_destination_addr;
+	__u32 array2_length;
+	__u32 array2_destination_addr;
+	__u32 array3_length;
+	__u32 array4_length;
+	__u32 attribute;
+	__u32 extended_attribute;
+	__u32 reserved0;
+	__u32 reserved1;
+	__u32 reserved2;
+	__u32 image_checksum;
+};
 
 #endif
