@@ -737,6 +737,25 @@ fc_cn_stats_update(u16 event_type, struct fc_fpin_stats *stats)
 	}
 }
 
+static void fc_fpin_set_marginal(struct Scsi_Host *shost, struct fc_rport *rport)
+{
+	struct fc_internal *i = to_fc_internal(shost->transportt);
+	unsigned long flags;
+
+	spin_lock_irqsave(shost->host_lock, flags);
+
+	if (rport->port_state == FC_PORTSTATE_ONLINE &&
+	    rport->roles & FC_PORT_ROLE_NVME_TARGET) {
+		rport->port_state = FC_PORTSTATE_MARGINAL;
+		spin_unlock_irqrestore(shost->host_lock, flags);
+		if (i->f->set_rport_marginal)
+			i->f->set_rport_marginal(rport, true);
+		return;
+	}
+
+	spin_unlock_irqrestore(shost->host_lock, flags);
+}
+
 static void
 fc_fpin_pname_stats_update(struct Scsi_Host *shost,
 			   struct fc_rport *attach_rport, u16 event_type,
@@ -764,6 +783,7 @@ fc_fpin_pname_stats_update(struct Scsi_Host *shost,
 			if (rport == attach_rport)
 				continue;
 			stats_update(event_type, &rport->fpin_stats);
+			fc_fpin_set_marginal(shost, rport);
 		}
 	}
 }
@@ -776,12 +796,11 @@ fc_fpin_pname_stats_update(struct Scsi_Host *shost,
  *
  */
 static void
-fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_tlv_desc *tlv)
+fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_fn_li_desc *li_desc)
 {
 	struct fc_rport *rport = NULL;
 	struct fc_rport *attach_rport = NULL;
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
-	struct fc_fn_li_desc *li_desc = (struct fc_fn_li_desc *)tlv;
 	u16 event_type = be16_to_cpu(li_desc->event_type);
 
 	rport = fc_find_rport_by_wwpn(shost,
@@ -812,12 +831,11 @@ fc_fpin_li_stats_update(struct Scsi_Host *shost, struct fc_tlv_desc *tlv)
  */
 static void
 fc_fpin_delivery_stats_update(struct Scsi_Host *shost,
-			      struct fc_tlv_desc *tlv)
+			      struct fc_fn_deli_desc *dn_desc)
 {
 	struct fc_rport *rport = NULL;
 	struct fc_rport *attach_rport = NULL;
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
-	struct fc_fn_deli_desc *dn_desc = (struct fc_fn_deli_desc *)tlv;
 	u32 reason_code = be32_to_cpu(dn_desc->deli_reason_code);
 
 	rport = fc_find_rport_by_wwpn(shost,
@@ -843,12 +861,10 @@ fc_fpin_delivery_stats_update(struct Scsi_Host *shost,
  */
 static void
 fc_fpin_peer_congn_stats_update(struct Scsi_Host *shost,
-				struct fc_tlv_desc *tlv)
+				struct fc_fn_peer_congn_desc *pc_desc)
 {
 	struct fc_rport *rport = NULL;
 	struct fc_rport *attach_rport = NULL;
-	struct fc_fn_peer_congn_desc *pc_desc =
-	    (struct fc_fn_peer_congn_desc *)tlv;
 	u16 event_type = be16_to_cpu(pc_desc->event_type);
 
 	rport = fc_find_rport_by_wwpn(shost,
@@ -876,15 +892,28 @@ fc_fpin_peer_congn_stats_update(struct Scsi_Host *shost,
  */
 static void
 fc_fpin_congn_stats_update(struct Scsi_Host *shost,
-			   struct fc_tlv_desc *tlv)
+			   struct fc_fn_congn_desc *congn)
 {
 	struct fc_host_attrs *fc_host = shost_to_fc_host(shost);
-	struct fc_fn_congn_desc *congn = (struct fc_fn_congn_desc *)tlv;
 
 	fc_cn_stats_update(be16_to_cpu(congn->event_type),
 			   &fc_host->fpin_stats);
 }
 
+
+void fpin_dump_buffer(const void *buf, uint size);
+void fpin_dump_buffer(const void *buf, uint size)
+{
+	uint cnt;
+
+	pr_warn("%-+5d  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n", size);
+	pr_warn("----- -----------------------------------------------\n");
+	for (cnt = 0; cnt < size; cnt += 16) {
+		pr_warn("%04x: ", cnt);
+		print_hex_dump(KERN_CONT, "", DUMP_PREFIX_NONE, 16, 1,
+			       buf + cnt, min(16U, size - cnt), false);
+	}
+}
 /**
  * fc_host_fpin_rcv - routine to process a received FPIN.
  * @shost:		host the FPIN was received on
@@ -899,32 +928,39 @@ fc_host_fpin_rcv(struct Scsi_Host *shost, u32 fpin_len, char *fpin_buf,
 		u8 event_acknowledge)
 {
 	struct fc_els_fpin *fpin = (struct fc_els_fpin *)fpin_buf;
-	struct fc_tlv_desc *tlv;
+	union fc_tlv_desc *tlv;
 	u32 bytes_remain;
 	u32 dtag;
 	enum fc_host_event_code event_code =
 		event_acknowledge ? FCH_EVT_LINK_FPIN_ACK : FCH_EVT_LINK_FPIN;
 
+	fpin_dump_buffer(fpin_buf, fpin_len);
 	/* Update Statistics */
-	tlv = (struct fc_tlv_desc *)&fpin->fpin_desc[0];
+	tlv = &fpin->fpin_desc[0];
 	bytes_remain = fpin_len - offsetof(struct fc_els_fpin, fpin_desc);
 	bytes_remain = min_t(u32, bytes_remain, be32_to_cpu(fpin->desc_len));
-
+	pr_warn("%s: Got FPIN event", __func__);
+	pr_warn("%s: FPIN bytes_remain: %d", __func__, bytes_remain);
+	pr_warn("%s: FPIN FC_TLV_DESC_HDR_SZ: %ld", __func__, FC_TLV_DESC_HDR_SZ);
+	pr_warn("%s: FPIN FC_TLV_DESC_SZ_FROM_LENGTH: %ld", __func__, FC_TLV_DESC_SZ_FROM_LENGTH(tlv));
 	while (bytes_remain >= FC_TLV_DESC_HDR_SZ &&
 	       bytes_remain >= FC_TLV_DESC_SZ_FROM_LENGTH(tlv)) {
-		dtag = be32_to_cpu(tlv->desc_tag);
+		dtag = be32_to_cpu(tlv->hdr.desc_tag);
+		pr_warn("%s: Got FPIN event dtag: %x", __func__, dtag);
+		pr_warn("%s: expected FPIN event dtag: %x", __func__, ELS_DTAG_LNK_INTEGRITY);
 		switch (dtag) {
 		case ELS_DTAG_LNK_INTEGRITY:
-			fc_fpin_li_stats_update(shost, tlv);
+			fc_fpin_li_stats_update(shost, &tlv->li);
+			pr_warn("%s: Got FPIN link integrity event", __func__);
 			break;
 		case ELS_DTAG_DELIVERY:
-			fc_fpin_delivery_stats_update(shost, tlv);
+			fc_fpin_delivery_stats_update(shost, &tlv->deli);
 			break;
 		case ELS_DTAG_PEER_CONGEST:
-			fc_fpin_peer_congn_stats_update(shost, tlv);
+			fc_fpin_peer_congn_stats_update(shost, &tlv->peer_congn);
 			break;
 		case ELS_DTAG_CONGESTION:
-			fc_fpin_congn_stats_update(shost, tlv);
+			fc_fpin_congn_stats_update(shost, &tlv->congn);
 		}
 
 		bytes_remain -= FC_TLV_DESC_SZ_FROM_LENGTH(tlv);
@@ -1236,34 +1272,58 @@ static ssize_t fc_rport_set_marginal_state(struct device *dev,
 						const char *buf, size_t count)
 {
 	struct fc_rport *rport = transport_class_to_rport(dev);
+	struct Scsi_Host *shost = rport_to_shost(rport);
+	struct fc_internal *i = to_fc_internal(shost->transportt);
 	enum fc_port_state port_state;
 	int ret = 0;
+	unsigned long flags;
 
 	ret = get_fc_port_state_match(buf, &port_state);
 	if (ret)
 		return -EINVAL;
-	if (port_state == FC_PORTSTATE_MARGINAL) {
+
+	spin_lock_irqsave(shost->host_lock, flags);
+
+	switch (port_state) {
+	case FC_PORTSTATE_MARGINAL:
 		/*
 		 * Change the state to Marginal only if the
 		 * current rport state is Online
 		 * Allow only Online->Marginal
 		 */
-		if (rport->port_state == FC_PORTSTATE_ONLINE)
+		if (rport->port_state == FC_PORTSTATE_ONLINE) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
-			return -EINVAL;
-	} else if (port_state == FC_PORTSTATE_ONLINE) {
+			spin_unlock_irqrestore(shost->host_lock, flags);
+			if (i->f->set_rport_marginal)
+				i->f->set_rport_marginal(rport, true);
+			return count;
+		}
+		break;
+
+	case FC_PORTSTATE_ONLINE:
 		/*
 		 * Change the state to Online only if the
 		 * current rport state is Marginal
 		 * Allow only Marginal->Online
 		 */
-		if (rport->port_state == FC_PORTSTATE_MARGINAL)
+		if (rport->port_state == FC_PORTSTATE_MARGINAL) {
 			rport->port_state = port_state;
-		else if (port_state != rport->port_state)
-			return -EINVAL;
-	} else
+			spin_unlock_irqrestore(shost->host_lock, flags);
+			if (i->f->set_rport_marginal)
+				i->f->set_rport_marginal(rport, false);
+			return count;
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (port_state != rport->port_state) {
+		spin_unlock_irqrestore(shost->host_lock, flags);
 		return -EINVAL;
+	}
+
+	spin_unlock_irqrestore(shost->host_lock, flags);
 	return count;
 }
 
