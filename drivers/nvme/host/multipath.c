@@ -490,7 +490,7 @@ out:
 static struct nvme_ns *nvme_queue_depth_path(struct nvme_ns_head *head)
 {
 	struct nvme_ns *best_opt = NULL, *best_nonopt = NULL, *ns;
-	unsigned int min_depth_opt = UINT_MAX, min_depth_nonopt = UINT_MAX;
+	int min_depth_opt = UINT_MAX, min_depth_nonopt = UINT_MAX;
 	bool opt_is_marginal = true, nonopt_is_marginal = true, marginal;
 
 	unsigned int depth;
