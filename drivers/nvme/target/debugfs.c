@@ -152,6 +152,123 @@ static int nvmet_ctrl_tls_concat_show(struct seq_file *m, void *p)
 }
 NVMET_DEBUGFS_ATTR(nvmet_ctrl_tls_concat);
 #endif
+static int nvmet_ctrl_instance_ciu_show(struct seq_file *m, void *p)
+{
+	struct nvmet_ctrl *ctrl = m->private;
+
+	seq_printf(m, "%02x\n", ctrl->ciu);
+	return 0;
+}
+NVMET_DEBUGFS_ATTR(nvmet_ctrl_instance_ciu);
+
+static int nvmet_ctrl_instance_cirn_show(struct seq_file *m, void *p)
+{
+	struct nvmet_ctrl *ctrl = m->private;
+
+	seq_printf(m, "%016llx\n", ctrl->cirn);
+	return 0;
+}
+NVMET_DEBUGFS_ATTR(nvmet_ctrl_instance_cirn);
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_DELAY_REQUESTS)
+static int nvmet_ctrl_delay_show(struct seq_file *m, void *p)
+{
+	struct nvmet_ctrl *ctrl = m->private;
+	int delay_count = atomic_read(&ctrl->delay_count);
+
+	seq_printf(m, "%u %u\n", delay_count, ctrl->delay_msec);
+	return 0;
+}
+
+static ssize_t nvmet_ctrl_delay_write(struct file *file, const char __user *buf,
+				      size_t count, loff_t *ppos)
+{
+	struct seq_file *m = file->private_data;
+	struct nvmet_ctrl *ctrl = m->private;
+	char delay_buf[22] = {};
+	int delay_count;
+	int delay_msec;
+	int n;
+
+	if (count >= sizeof(delay_buf))
+		return -EINVAL;
+	if (copy_from_user(delay_buf, buf, count))
+		return -EFAULT;
+
+	n = sscanf(delay_buf, "%u %u", &delay_count, &delay_msec);
+	if (n < 1 || n > 2)
+		return -EINVAL;
+	if (n == 2)
+		ctrl->delay_msec = delay_msec;
+	atomic_set(&ctrl->delay_count, delay_count);
+	return count;
+}
+NVMET_DEBUGFS_RW_ATTR(nvmet_ctrl_delay);
+#endif /* CONFIG_NVME_TARGET_DELAY_REQUESTS */
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_FATAL_OPCODE)
+static int nvmet_ctrl_fatal_opcode_show(struct seq_file *m, void *p)
+{
+	struct nvmet_ctrl *ctrl = m->private;
+
+	seq_printf(m, "%02x %u\n", ctrl->fopcode, ctrl->fopcode_delay_ms);
+	return 0;
+}
+
+static ssize_t nvmet_ctrl_fatal_opcode_write(struct file *file, const char __user *buf,
+				      size_t count, loff_t *ppos)
+{
+	struct seq_file *m = file->private_data;
+	struct nvmet_ctrl *ctrl = m->private;
+	char fopcode_buf[22] = {};
+	int fopcode_delay_ms, n;
+	uint8_t fopcode;
+
+	if (count >= sizeof(fopcode_buf))
+		return -EINVAL;
+	if (copy_from_user(fopcode_buf, buf, count))
+		return -EFAULT;
+
+	n = sscanf(fopcode_buf, "%hhx %u", &fopcode, &fopcode_delay_ms);
+	if (n != 2)
+		return -EINVAL;
+	ctrl->fopcode = fopcode;
+	ctrl->fopcode_delay_ms = fopcode_delay_ms;
+	return count;
+}
+NVMET_DEBUGFS_RW_ATTR(nvmet_ctrl_fatal_opcode);
+#endif /* CONFIG_NVME_TARGET_FATAL_OPCODE */
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_FORCE_FAIL_CCR)
+static int nvmet_ctrl_fail_ccr_show(struct seq_file *m, void *p)
+{
+	struct nvmet_ctrl *ctrl = m->private;
+
+	seq_printf(m, "%d\n", ctrl->fail_ccr);
+	return 0;
+}
+
+static ssize_t nvmet_ctrl_fail_ccr_write(struct file *file, const char __user *buf,
+				      size_t count, loff_t *ppos)
+{
+	struct seq_file *m = file->private_data;
+	struct nvmet_ctrl *ctrl = m->private;
+	char fail_ccr_buf[22] = {};
+	int fail_ccr, n;
+
+	if (count >= sizeof(fail_ccr_buf))
+		return -EINVAL;
+	if (copy_from_user(fail_ccr_buf, buf, count))
+		return -EFAULT;
+
+	n = sscanf(fail_ccr_buf, "%d", &fail_ccr);
+	if (n != 1)
+		return -EINVAL;
+	ctrl->fail_ccr = !!fail_ccr;
+	return count;
+}
+NVMET_DEBUGFS_RW_ATTR(nvmet_ctrl_fail_ccr);
+#endif /* CONFIG_NVME_TARGET_FORCE_FAIL_CCR */
 
 int nvmet_debugfs_ctrl_setup(struct nvmet_ctrl *ctrl)
 {
@@ -183,6 +300,19 @@ int nvmet_debugfs_ctrl_setup(struct nvmet_ctrl *ctrl)
 			    &nvmet_ctrl_tls_concat_fops);
 	debugfs_create_file("tls_key", S_IRUSR, ctrl->debugfs_dir, ctrl,
 			    &nvmet_ctrl_tls_key_fops);
+#endif
+	debugfs_create_file("ciu", S_IRUSR, ctrl->debugfs_dir, ctrl,
+			    &nvmet_ctrl_instance_ciu_fops);
+	debugfs_create_file("cirn", S_IRUSR, ctrl->debugfs_dir, ctrl,
+			    &nvmet_ctrl_instance_cirn_fops);
+#if IS_ENABLED(CONFIG_NVME_TARGET_DELAY_REQUESTS)
+	debugfs_create_file("delay", S_IWUSR, ctrl->debugfs_dir, ctrl,
+			    &nvmet_ctrl_delay_fops);
+#endif
+
+#if IS_ENABLED(CONFIG_NVME_TARGET_FATAL_OPCODE)
+	debugfs_create_file("fopcode", S_IWUSR, ctrl->debugfs_dir, ctrl,
+			    &nvmet_ctrl_fatal_opcode_fops);
 #endif
 	return 0;
 }
